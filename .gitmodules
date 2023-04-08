@@ -1,0 +1,3 @@
+[submodule "deqs"]
+	path = deqs
+	url = https://github.com/mobilecoinofficial/deqs.git
