@@ -5,16 +5,24 @@ edition = "2021"
 
 [dependencies]
 # third party
+clap = { version = "4.1", features = ["derive", "env"] }
 egui = "0.21.0"
 eframe = { version = "0.21.0", default-features = false, features = [
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
+    "persistence",
 ] }
 grpcio = "0.12.1"
 protobuf = "2.27.1"
+rust_decimal = "1.28"
+serde = { version = "1", features = ["derive"] }
+# This is for egui's text logs
+tracing-subscriber = "0.3"
 
 # mobilecoin
 mc-mobilecoind-api = { path = "deqs/mobilecoin/mobilecoind/api" }
+mc-transaction-types = { path = "deqs/mobilecoin/transaction/types" }
+mc-util-uri = { path = "deqs/mobilecoin/util/uri" }
 
 # deqs
 deqs-api = { path = "deqs/api" }
