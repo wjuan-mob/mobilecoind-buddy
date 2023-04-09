@@ -16,4 +16,4 @@ First, start `mobilecoind`. It should be listening for grpc on `localhost:4444` 
 
 You can open a new terminal and use `./build_and_run_testnet_mobilecoind.sh` if you like.
 
-Then, you can use a command like `cargo run -- --keyfile=example/account_key.json` to start the front-end.
+Then, you can use a command like `cargo run --release -- --keyfile=example/account_key.json` to start the front-end.

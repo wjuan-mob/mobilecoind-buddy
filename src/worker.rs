@@ -23,7 +23,6 @@ pub struct Worker {
     #[allow(unused)]
     config: Config,
     /// The connection to mobilecoind
-    #[allow(unused)]
     mobilecoind_api_client: MobilecoindApiClient,
     /// The account key holding our funds
     #[allow(unused)]
@@ -129,10 +128,9 @@ impl Worker {
         self.monitor_b58_address.clone()
     }
 
-    pub fn get_sync_percent(&self) -> String {
+    pub fn get_sync_progress(&self) -> (u64, u64) {
         let st = self.state.lock().unwrap();
-        let fraction = st.synced_blocks as f64 / st.total_blocks as f64;
-        format!("{:.1}", fraction * 100f64)
+        (st.synced_blocks, st.total_blocks)
     }
 
     pub fn get_token_info(&self) -> Vec<TokenInfo> {
@@ -323,6 +321,8 @@ impl Worker {
                 break;
             }
 
+            event!(Level::TRACE, "worker: polling loop");
+
             if let Err(err) =
                 Self::poll_mobilecoind(&monitor_id, &mobilecoind_api_client, &minimum_fees, &state)
             {
@@ -352,6 +352,7 @@ impl Worker {
     ) -> Result<(), grpcio::Error> {
         // Check ledger status
         {
+            event!(Level::TRACE, "worker: check ledger status");
             let info = client.get_ledger_info(&Default::default())?;
             let mut st = state.lock().unwrap();
             st.total_blocks = info.block_count;
@@ -359,6 +360,7 @@ impl Worker {
 
         // Check monitor status
         {
+            event!(Level::TRACE, "worker: check monitor status");
             let mut req = api::GetMonitorStatusRequest::new();
             req.set_monitor_id(monitor_id.clone());
             let resp = client.get_monitor_status(&req)?;
@@ -370,6 +372,7 @@ impl Worker {
         // Get balance
         {
             for token_id in minimum_fees.keys() {
+                event!(Level::TRACE, "worker: check balance: {}", *token_id);
                 // FIXME: We should also check some other subaddresses most likely
                 let mut req = api::GetBalanceRequest::new();
                 req.set_monitor_id(monitor_id.clone());

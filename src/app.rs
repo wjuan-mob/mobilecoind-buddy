@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The three panels the app can show
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
@@ -88,17 +89,23 @@ impl eframe::App for App {
             .as_mut()
             .expect("intialization failed, no worker is present");
 
-        ctx.set_pixels_per_point(5.0);
+        // Makes the font appear large enough to read
+        ctx.set_pixels_per_point(4.0);
+        // Make the app redraw itself even without movement
+        ctx.request_repaint_after(Duration::from_millis(100));
 
         // The top panel is always shown no matter what mode we are in,
         // it shows the public address and sync %
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.with_layout(Layout::top_down(Align::Center), |ui| {
                 let public_address = worker.get_b58_address();
-                let sync_percent = worker.get_sync_percent();
+                let (synced_blocks, total_blocks) = worker.get_sync_progress();
+                let fraction = synced_blocks as f64 / total_blocks as f64;
+                let sync_percent = format!("{:.1}", fraction * 100f64);
+
                 // Add a display of the public address and the sync %
                 ui.label(format!("Public address: {public_address}"));
-                ui.label(format!("Ledger sync: {sync_percent}%"));
+                ui.label(format!("Ledger sync: {sync_percent}% ({synced_blocks} / {total_blocks})"));
 
                 egui::warn_if_debug_build(ui);
 
