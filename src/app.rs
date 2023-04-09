@@ -1,5 +1,5 @@
 use crate::{Config, TokenId, TokenInfo, Worker};
-use egui::{Align, Button, CentralPanel, Grid, Layout, TopBottomPanel};
+use egui::{Align, Button, CentralPanel, Color32, Grid, Layout, RichText, TopBottomPanel};
 use rust_decimal::{prelude::*, Decimal};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -98,21 +98,34 @@ impl eframe::App for App {
         // it shows the public address and sync %
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                // Add a display of the public address, and a copy button
                 let public_address = worker.get_b58_address();
+                if ui
+                    .button(format!(
+                        "Public address: {}...{} 📋",
+                        &public_address[..8],
+                        &public_address[public_address.len() - 8..]
+                    ))
+                    .clicked()
+                {
+                    ui.output_mut(|o| o.copied_text = public_address);
+                }
+
+                // Add a display of the sync %
                 let (synced_blocks, total_blocks) = worker.get_sync_progress();
                 let fraction = synced_blocks as f64 / total_blocks as f64;
                 let sync_percent = format!("{:.1}", fraction * 100f64);
+                ui.label(format!(
+                    "Ledger sync: {sync_percent}% ({synced_blocks} / {total_blocks})"
+                ));
 
-                // Add a display of the public address and the sync %
-                ui.label(format!("Public address: {public_address}"));
-                ui.label(format!("Ledger sync: {sync_percent}% ({synced_blocks} / {total_blocks})"));
-
+                // Add a warning if we have a debug build
                 egui::warn_if_debug_build(ui);
 
                 // Check if the worker has reported any error, if so, show it
                 ui.horizontal(|ui| {
                     if let Some(err_str) = worker.top_error() {
-                        ui.label(err_str);
+                        ui.label(RichText::new(err_str).color(Color32::from_rgb(255, 0, 0)));
                         if ui.button("Close").clicked() {
                             worker.pop_error();
                         }

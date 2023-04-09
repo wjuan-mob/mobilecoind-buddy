@@ -4309,18 +4309,3 @@ dependencies = [
  "quote",
  "syn 2.0.13",
 ]
-
-[[patch.unused]]
-name = "lmdb-rkv"
-version = "0.14.0"
-source = "git+https://github.com/mozilla/lmdb-rs?rev=df1c2f5#df1c2f56e3088f097c719c57b9925ab51e26f3f4"
-
-[[patch.unused]]
-name = "mbedtls"
-version = "0.8.1"
-source = "git+https://github.com/mobilecoinfoundation/rust-mbedtls.git?rev=ac6ee17a31e37311ce7f4fa0649c340e5d85258d#ac6ee17a31e37311ce7f4fa0649c340e5d85258d"
-
-[[patch.unused]]
-name = "mbedtls-sys-auto"
-version = "2.26.1"
-source = "git+https://github.com/mobilecoinfoundation/rust-mbedtls.git?rev=ac6ee17a31e37311ce7f4fa0649c340e5d85258d#ac6ee17a31e37311ce7f4fa0649c340e5d85258d"
