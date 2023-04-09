@@ -1,7 +1,7 @@
-use crate::{Config, Worker, TokenInfo, TokenId};
-use egui::{Button, Grid, TopBottomPanel, CentralPanel, Layout, Align};
-use serde::{Serialize, Deserialize};
-use rust_decimal::{Decimal, prelude::*};
+use crate::{Config, TokenId, TokenInfo, Worker};
+use egui::{Align, Button, CentralPanel, Grid, Layout, TopBottomPanel};
+use rust_decimal::{prelude::*, Decimal};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -83,7 +83,10 @@ impl eframe::App for App {
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let worker = self.worker.as_mut().expect("intialization failed, no worker is present");
+        let worker = self
+            .worker
+            .as_mut()
+            .expect("intialization failed, no worker is present");
 
         ctx.set_pixels_per_point(5.0);
 
@@ -154,7 +157,7 @@ impl eframe::App for App {
                             ui.end_row();
                         }
                     });
-                },
+                }
                 Mode::Send => {
                     ui.heading("Send");
 
@@ -163,41 +166,67 @@ impl eframe::App for App {
                         ui.text_edit_singleline(&mut self.send_to);
                     });
 
-                    let current_token_info: Option<&TokenInfo> = token_infos.iter().find(|info| info.token_id == self.send_token_id);
+                    let current_token_info: Option<&TokenInfo> = token_infos
+                        .iter()
+                        .find(|info| info.token_id == self.send_token_id);
 
                     ui.horizontal(|ui| {
                         egui::ComboBox::from_label("Token")
-                            .selected_text(current_token_info.map(|info| info.symbol.clone()).unwrap_or_default())
+                            .selected_text(
+                                current_token_info
+                                    .map(|info| info.symbol.clone())
+                                    .unwrap_or_default(),
+                            )
                             .show_ui(ui, |ui| {
                                 for info in token_infos.iter() {
-                                    ui.selectable_value(&mut self.send_token_id, info.token_id, info.symbol.clone());
+                                    ui.selectable_value(
+                                        &mut self.send_token_id,
+                                        info.token_id,
+                                        info.symbol.clone(),
+                                    );
                                 }
-                            }
-                        );
+                            });
 
-                        let scaled_value_str = self.send_value.entry(self.send_token_id).or_insert_with(|| "0".to_string());
+                        let scaled_value_str = self
+                            .send_value
+                            .entry(self.send_token_id)
+                            .or_insert_with(|| "0".to_string());
                         ui.text_edit_singleline(scaled_value_str);
                     });
 
-                    let scaled_value_str = self.send_value.entry(self.send_token_id).or_insert_with(|| "0".to_string());
+                    let scaled_value_str = self
+                        .send_value
+                        .entry(self.send_token_id)
+                        .or_insert_with(|| "0".to_string());
 
                     // This either the u64 value of the token to send, or a string error to display
-                    let okay_to_submit: Result<u64, String> = current_token_info.ok_or("must select a token".to_string()).and_then(|info: &TokenInfo| -> Result<u64, String> {
-                        let parsed_value = Decimal::from_str(scaled_value_str).map_err(|err| err.to_string())?;
-                        let scale = Decimal::new(1, info.decimals);
-                        let rescaled_value = parsed_value.checked_div(scale).ok_or("decimal overflow".to_string())?;
-                        let u64_value = rescaled_value.round().to_u64().ok_or("u64 overflow".to_string())?;
+                    let okay_to_submit: Result<u64, String> = current_token_info
+                        .ok_or("must select a token".to_string())
+                        .and_then(|info: &TokenInfo| -> Result<u64, String> {
+                            let parsed_value = Decimal::from_str(scaled_value_str)
+                                .map_err(|err| err.to_string())?;
+                            let scale = Decimal::new(1, info.decimals);
+                            let rescaled_value = parsed_value
+                                .checked_div(scale)
+                                .ok_or("decimal overflow".to_string())?;
+                            let u64_value = rescaled_value
+                                .round()
+                                .to_u64()
+                                .ok_or("u64 overflow".to_string())?;
 
-                        let u64_value_with_fee = u64_value.checked_add(info.fee).ok_or("u64 overflow with fee".to_string())?;
-                        if u64_value_with_fee > *balances.entry(self.send_token_id).or_default() {
-                            return Err("balance exceeded".to_string());
-                        }
+                            let u64_value_with_fee = u64_value
+                                .checked_add(info.fee)
+                                .ok_or("u64 overflow with fee".to_string())?;
+                            if u64_value_with_fee > *balances.entry(self.send_token_id).or_default()
+                            {
+                                return Err("balance exceeded".to_string());
+                            }
 
-                        // Check the send_to field
-                        Worker::decode_b58_address(&self.send_to)?;
+                            // Check the send_to field
+                            Worker::decode_b58_address(&self.send_to)?;
 
-                        Ok(u64_value)
-                    });
+                            Ok(u64_value)
+                        });
 
                     match okay_to_submit {
                         Ok(u64_value) => {
@@ -205,16 +234,16 @@ impl eframe::App for App {
                             if ui.button("Submit").clicked() {
                                 worker.send(u64_value, self.send_token_id, self.send_to.clone());
                             }
-                        },
+                        }
                         Err(err_str) => {
                             ui.label(err_str);
                             ui.add_enabled(false, Button::new("Submit"));
                         }
                     }
-                },
+                }
                 Mode::Swap => {
                     ui.heading("Swap");
-                },
+                }
             }
         });
     }

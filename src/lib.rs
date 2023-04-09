@@ -7,5 +7,5 @@ mod worker;
 pub use app::App;
 pub use config::Config;
 pub use grpcio_extensions::ConnectionUriGrpcioChannel;
-pub use types::{TokenInfo, TokenId};
+pub use types::{TokenId, TokenInfo};
 pub use worker::Worker;

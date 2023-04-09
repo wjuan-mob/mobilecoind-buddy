@@ -1,15 +1,18 @@
-use crate::{Config, TokenId, TokenInfo, ConnectionUriGrpcioChannel};
+use crate::{Config, ConnectionUriGrpcioChannel, TokenId, TokenInfo};
 //use rust_decimal::Decimal;
 use displaydoc::Display;
 use grpcio::ChannelBuilder;
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::thread::{JoinHandle};
-use std::time::Duration;
-use mc_account_keys::{AccountKey};
+use mc_account_keys::AccountKey;
+use mc_api::{external, printable::PrintableWrapper};
 use mc_mobilecoind_api::{self as api, mobilecoind_api_grpc::MobilecoindApiClient};
 use mc_util_keyfile::read_keyfile;
-use mc_api::{external, printable::PrintableWrapper};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread::JoinHandle;
+use std::time::Duration;
 use tracing::{event, span, Level};
 
 /// The state and handle to the background worker, which owns the server connections.
@@ -86,11 +89,11 @@ impl Worker {
         };
 
         let state = Arc::new(Mutex::new(WorkerState {
-                synced_blocks: 0,
-                total_blocks: 1,
-                balance: Default::default(),
-                errors: Default::default(),                
-            }));
+            synced_blocks: 0,
+            total_blocks: 1,
+            balance: Default::default(),
+            errors: Default::default(),
+        }));
 
         let stop_requested = Arc::new(AtomicBool::default());
         let thread_stop_requested = stop_requested.clone();
@@ -99,13 +102,15 @@ impl Worker {
         let thread_minimum_fees = minimum_fees.clone();
         let thread_state = state.clone();
 
-        let join_handle = Some(std::thread::spawn(move || Self::worker_thread_entrypoint(
-            thread_monitor_id,
-            thread_client,
-            thread_minimum_fees,
-            thread_state,
-            thread_stop_requested,
-        )));
+        let join_handle = Some(std::thread::spawn(move || {
+            Self::worker_thread_entrypoint(
+                thread_monitor_id,
+                thread_client,
+                thread_minimum_fees,
+                thread_state,
+                thread_stop_requested,
+            )
+        }));
 
         Ok(Arc::new(Worker {
             config,
@@ -153,13 +158,17 @@ impl Worker {
             },
         ];
         // Filter by which of these are actually defined on the given network
-        result.into_iter().filter_map(|mut info|
-            if let Some(fee) = self.minimum_fees.get(&info.token_id) {
-                info.fee = *fee;
-                Some(info)
-            } else {
-                None
-            }).collect()
+        result
+            .into_iter()
+            .filter_map(|mut info| {
+                if let Some(fee) = self.minimum_fees.get(&info.token_id) {
+                    info.fee = *fee;
+                    Some(info)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Get the balances of the monitored account.
@@ -169,20 +178,26 @@ impl Worker {
 
     /// Decode a b58 address
     pub fn decode_b58_address(b58_address: &str) -> Result<external::PublicAddress, String> {
-           let printable_wrapper = PrintableWrapper::b58_decode(b58_address.to_owned())
-                            .map_err(|err| format!("Invalid address: {err}"))?;
+        let printable_wrapper = PrintableWrapper::b58_decode(b58_address.to_owned())
+            .map_err(|err| format!("Invalid address: {err}"))?;
 
-           if !printable_wrapper.has_public_address() {
-                return Err("not a public address".to_string());
-           };
+        if !printable_wrapper.has_public_address() {
+            return Err("not a public address".to_string());
+        };
 
-           Ok(printable_wrapper.get_public_address().clone())    
+        Ok(printable_wrapper.get_public_address().clone())
     }
 
     /// Send money from the monitored account to the specified recipient
     pub fn send(&self, value: u64, token_id: TokenId, recipient: String) {
         span!(Level::INFO, "send payment");
-        event!(Level::INFO, "send: {} of {} to {}", value, *token_id, recipient);
+        event!(
+            Level::INFO,
+            "send: {} of {} to {}",
+            value,
+            *token_id,
+            recipient
+        );
 
         let receiver = match Self::decode_b58_address(&recipient) {
             Ok(receiver) => receiver,
@@ -204,7 +219,9 @@ impl Worker {
         req.token_id = *token_id;
 
         match self.mobilecoind_api_client.send_payment(&req) {
-            Ok(_) => { event!(Level::INFO, "submitted payment successfully"); }
+            Ok(_) => {
+                event!(Level::INFO, "submitted payment successfully");
+            }
             Err(err) => {
                 event!(Level::ERROR, "failed to submit payment: {}", err);
                 let mut st = self.state.lock().unwrap();
@@ -295,23 +312,20 @@ impl Worker {
     }
 
     fn worker_thread_entrypoint(
-            monitor_id: Vec<u8>,
-            mobilecoind_api_client: MobilecoindApiClient,
-            minimum_fees: HashMap<TokenId, u64>,
-            state: Arc<Mutex<WorkerState>>,
-            stop_requested: Arc<AtomicBool>,    
+        monitor_id: Vec<u8>,
+        mobilecoind_api_client: MobilecoindApiClient,
+        minimum_fees: HashMap<TokenId, u64>,
+        state: Arc<Mutex<WorkerState>>,
+        stop_requested: Arc<AtomicBool>,
     ) {
         loop {
             if stop_requested.load(Ordering::SeqCst) {
                 break;
             }
 
-            if let Err(err) = Self::poll_mobilecoind(
-                &monitor_id,
-                &mobilecoind_api_client,
-                &minimum_fees,
-                &state
-            ) {
+            if let Err(err) =
+                Self::poll_mobilecoind(&monitor_id, &mobilecoind_api_client, &minimum_fees, &state)
+            {
                 event!(Level::ERROR, "polling mobilecoind: {}", err);
                 {
                     let mut st = state.lock().unwrap();
@@ -325,7 +339,6 @@ impl Worker {
                 continue;
             }
 
-
             // Back off for 100 ms
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -337,36 +350,36 @@ impl Worker {
         minimum_fees: &HashMap<TokenId, u64>,
         state: &Arc<Mutex<WorkerState>>,
     ) -> Result<(), grpcio::Error> {
-            // Check ledger status
-            {
-                let info = client.get_ledger_info(&Default::default())?;
-                let mut st = state.lock().unwrap();
-                st.total_blocks = info.block_count;                
-            }
+        // Check ledger status
+        {
+            let info = client.get_ledger_info(&Default::default())?;
+            let mut st = state.lock().unwrap();
+            st.total_blocks = info.block_count;
+        }
 
-            // Check monitor status
-            {
-                let mut req = api::GetMonitorStatusRequest::new();
+        // Check monitor status
+        {
+            let mut req = api::GetMonitorStatusRequest::new();
+            req.set_monitor_id(monitor_id.clone());
+            let resp = client.get_monitor_status(&req)?;
+
+            let mut st = state.lock().unwrap();
+            st.synced_blocks = resp.get_status().next_block;
+        }
+
+        // Get balance
+        {
+            for token_id in minimum_fees.keys() {
+                // FIXME: We should also check some other subaddresses most likely
+                let mut req = api::GetBalanceRequest::new();
                 req.set_monitor_id(monitor_id.clone());
-                let resp = client.get_monitor_status(&req)?;
+                req.set_token_id(**token_id);
+                let resp = client.get_balance(&req)?;
 
                 let mut st = state.lock().unwrap();
-                st.synced_blocks = resp.get_status().next_block;
+                *st.balance.entry(*token_id).or_default() = resp.balance;
             }
-
-            // Get balance
-            {
-                for token_id in minimum_fees.keys() {
-                    // FIXME: We should also check some other subaddresses most likely
-                    let mut req = api::GetBalanceRequest::new();
-                    req.set_monitor_id(monitor_id.clone());
-                    req.set_token_id(**token_id);
-                    let resp = client.get_balance(&req)?;
-
-                    let mut st = state.lock().unwrap();
-                    *st.balance.entry(*token_id).or_default() = resp.balance;
-                }
-            }
+        }
         Ok(())
     }
 }
@@ -376,5 +389,5 @@ impl Worker {
 #[derive(Clone, Debug, Display)]
 pub enum WorkerInitError {
     /// Failed to initialize with mobilecoind
-    Mobilecoind
+    Mobilecoind,
 }

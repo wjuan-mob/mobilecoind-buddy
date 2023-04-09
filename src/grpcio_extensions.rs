@@ -3,12 +3,10 @@
 //! Extension traits that make it easier to start GRPC servers and connect to
 //! them using URIs.
 
-use grpcio::{
-    Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment,
-};
-use tracing::{event, Level};
+use grpcio::{Channel, ChannelBuilder, ChannelCredentialsBuilder, Environment};
 use mc_util_uri::ConnectionUri;
 use std::{sync::Arc, time::Duration};
+use tracing::{event, Level};
 
 /// A trait to ease grpcio channel construction from URIs.
 pub trait ConnectionUriGrpcioChannel {
@@ -38,12 +36,17 @@ impl ConnectionUriGrpcioChannel for ChannelBuilder {
                 None => ChannelCredentialsBuilder::new().build(),
             };
 
-            event!(Level::DEBUG, "Creating secure gRPC connection to {}", uri.addr());
+            event!(
+                Level::DEBUG,
+                "Creating secure gRPC connection to {}",
+                uri.addr()
+            );
 
             self = self.set_credentials(creds);
             self.connect(&uri.addr())
         } else {
-            event!(Level::WARN,
+            event!(
+                Level::WARN,
                 "Creating insecure gRPC connection to {}",
                 uri.addr(),
             );
