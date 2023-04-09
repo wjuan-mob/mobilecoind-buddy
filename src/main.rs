@@ -1,4 +1,5 @@
 use clap::Parser;
+use egui::Vec2;
 use mobilecoind_buddy::{App, Config, Worker};
 
 fn main() -> eframe::Result<()> {
@@ -10,7 +11,7 @@ fn main() -> eframe::Result<()> {
     let worker = Worker::new(config.clone()).expect("initialization failed");
 
     let native_options = eframe::NativeOptions {
-        
+        initial_window_size: Some(Vec2 { x: 600.0, y: 480.0 }),
         centered: true,
         ..Default::default()
     };

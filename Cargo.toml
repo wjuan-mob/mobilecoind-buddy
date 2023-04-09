@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # third party
 clap = { version = "4.1", features = ["derive", "env"] }
+displaydoc = "0.2"
 egui = "0.21.0"
 eframe = { version = "0.21.0", default-features = false, features = [
     "default_fonts", # Embed the default egui fonts.
@@ -16,12 +17,16 @@ grpcio = "0.12.1"
 protobuf = "2.27.1"
 rust_decimal = "1.28"
 serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
 # This is for egui's text logs
 tracing-subscriber = "0.3"
 
 # mobilecoin
+mc-account-keys = { path = "deqs/mobilecoin/account-keys" }
+mc-api = { path = "deqs/mobilecoin/api" }
 mc-mobilecoind-api = { path = "deqs/mobilecoin/mobilecoind/api" }
 mc-transaction-types = { path = "deqs/mobilecoin/transaction/types" }
+mc-util-keyfile = { path = "deqs/mobilecoin/util/keyfile" }
 mc-util-uri = { path = "deqs/mobilecoin/util/uri" }
 
 # deqs

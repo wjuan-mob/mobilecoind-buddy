@@ -2916,6 +2916,32 @@ name = "mc-util-host-cert"
 version = "4.0.2"
 
 [[package]]
+name = "mc-util-keyfile"
+version = "4.0.2"
+dependencies = [
+ "base64 0.21.0",
+ "clap 4.2.1",
+ "displaydoc",
+ "hex",
+ "mc-account-keys",
+ "mc-api",
+ "mc-core",
+ "mc-crypto-rand",
+ "mc-util-from-random",
+ "mc-util-parse",
+ "mc-util-serial",
+ "pem",
+ "prost",
+ "rand",
+ "rand_core",
+ "rand_hc",
+ "serde",
+ "serde_json",
+ "tiny-bip39",
+ "x509-signature",
+]
+
+[[package]]
 name = "mc-util-lmdb"
 version = "4.0.2"
 dependencies = [
@@ -2945,6 +2971,15 @@ dependencies = [
  "prometheus",
  "protobuf",
  "serde_json",
+]
+
+[[package]]
+name = "mc-util-parse"
+version = "4.0.2"
+dependencies = [
+ "hex",
+ "itertools",
+ "mc-sgx-css",
 ]
 
 [[package]]
@@ -3099,15 +3134,20 @@ version = "0.1.0"
 dependencies = [
  "clap 4.2.1",
  "deqs-api",
+ "displaydoc",
  "eframe",
  "egui",
  "grpcio",
+ "mc-account-keys",
+ "mc-api",
  "mc-mobilecoind-api",
  "mc-transaction-types",
+ "mc-util-keyfile",
  "mc-util-uri",
  "protobuf",
  "rust_decimal",
  "serde",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -4476,7 +4516,19 @@ checksum = "8ce8c33a8d48bd45d624a6e523445fd21ec13d3653cd51f681abf67418f54eb8"
 dependencies = [
  "cfg-if",
  "pin-project-lite",
+ "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4017f8f45139870ca7e672686113917c71c7a6e02d4924eda67186083c03081a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
