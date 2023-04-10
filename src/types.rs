@@ -3,6 +3,7 @@ pub use mc_transaction_types::{Amount, TokenId};
 use mc_transaction_extra::{SignedContingentInput, SignedContingentInputAmounts};
 use rust_decimal::{prelude::*, Decimal};
 use std::str::FromStr;
+use tracing::{event, Level};
 
 /// Info available about a particular token id, which can be used to display it,
 /// or to compute fees.
@@ -60,14 +61,21 @@ impl ValidatedQuote {
     /// Get information to render this quote as part of a quote book.
     /// Depending on which is the base and which is the counter, this ends up on the bid or ask side.
     /// TokenInfo are used to scale the token amounts appropriately for display.
-    pub fn get_quote_info(&self, base_token_id: TokenId, counter_token_id: TokenId, token_infos: &[TokenInfo]) -> Result<QuoteInfo, String> {
+    pub fn get_quote_info(
+        &self,
+        base_token_id: TokenId,
+        counter_token_id: TokenId,
+        token_infos: &[TokenInfo],
+    ) -> Result<QuoteInfo, String> {
         let base_token_info: &TokenInfo = token_infos
-           .iter()
-           .find(|info| info.token_id == base_token_id).ok_or("missing base token info".to_owned())?;
+            .iter()
+            .find(|info| info.token_id == base_token_id)
+            .ok_or("missing base token info".to_owned())?;
 
         let counter_token_info: &TokenInfo = token_infos
-           .iter()
-           .find(|info| info.token_id == counter_token_id).ok_or("missing counter token info".to_owned())?;
+            .iter()
+            .find(|info| info.token_id == counter_token_id)
+            .ok_or("missing counter token info".to_owned())?;
 
         if self.amounts.pseudo_output.token_id == base_token_id {
             // Quote is offering the base token, so this should be an ask
@@ -84,11 +92,19 @@ impl ValidatedQuote {
                     return Err("Ask SCI is too complicated for this implementation (expected one partial fill output)".to_owned());
                 }
                 if self.amounts.partial_fill_outputs[0].token_id != counter_token_id {
-                    return Err("Ask SCI does not belong to this book (partial fill output)".to_owned());
+                    return Err(
+                        "Ask SCI does not belong to this book (partial fill output)".to_owned()
+                    );
                 }
                 // TODO: should handle overflow at i64 conversion
-                let volume = Decimal::new(self.amounts.pseudo_output.value as i64, base_token_info.decimals);
-                let counter_volume = Decimal::new(self.amounts.partial_fill_outputs[0].value as i64, counter_token_info.decimals);
+                let volume = Decimal::new(
+                    self.amounts.pseudo_output.value as i64,
+                    base_token_info.decimals,
+                );
+                let counter_volume = Decimal::new(
+                    self.amounts.partial_fill_outputs[0].value as i64,
+                    counter_token_info.decimals,
+                );
                 let price = counter_volume / volume;
                 Ok(QuoteInfo {
                     quote_side,
@@ -108,8 +124,14 @@ impl ValidatedQuote {
                     return Err("Ask SCI does not belong to this book (required_output)".to_owned());
                 }
                 // TODO: should handle overflow at i64 conversion
-                let volume = Decimal::new(self.amounts.pseudo_output.value as i64, base_token_info.decimals);
-                let counter_volume = Decimal::new(self.amounts.required_outputs[0].value as i64, counter_token_info.decimals);
+                let volume = Decimal::new(
+                    self.amounts.pseudo_output.value as i64,
+                    base_token_info.decimals,
+                );
+                let counter_volume = Decimal::new(
+                    self.amounts.required_outputs[0].value as i64,
+                    counter_token_info.decimals,
+                );
                 let price = counter_volume / volume;
                 Ok(QuoteInfo {
                     quote_side,
@@ -119,7 +141,6 @@ impl ValidatedQuote {
                     timestamp: self.timestamp,
                 })
             }
-
         } else if self.amounts.pseudo_output.token_id == counter_token_id {
             // Quote is offering the counter token, so this should be an bid
             let quote_side = QuoteSide::Bid;
@@ -135,11 +156,19 @@ impl ValidatedQuote {
                     return Err("Bid SCI is too complicated for this implementation (expected one partial fill output)".to_owned());
                 }
                 if self.amounts.partial_fill_outputs[0].token_id != base_token_id {
-                    return Err("Bid SCI does not belong to this book (partial fill output)".to_owned());
+                    return Err(
+                        "Bid SCI does not belong to this book (partial fill output)".to_owned()
+                    );
                 }
                 // TODO: should handle overflow at i64 conversion
-                let counter_volume = Decimal::new(self.amounts.pseudo_output.value as i64, counter_token_info.decimals);
-                let volume = Decimal::new(self.amounts.partial_fill_outputs[0].value as i64, base_token_info.decimals);
+                let counter_volume = Decimal::new(
+                    self.amounts.pseudo_output.value as i64,
+                    counter_token_info.decimals,
+                );
+                let volume = Decimal::new(
+                    self.amounts.partial_fill_outputs[0].value as i64,
+                    base_token_info.decimals,
+                );
                 let price = counter_volume / volume;
                 Ok(QuoteInfo {
                     quote_side,
@@ -159,8 +188,14 @@ impl ValidatedQuote {
                     return Err("Bid SCI does not belong to this book (required_output)".to_owned());
                 }
                 // TODO: should handle overflow at i64 conversion
-                let counter_volume = Decimal::new(self.amounts.pseudo_output.value as i64, counter_token_info.decimals);
-                let volume = Decimal::new(self.amounts.required_outputs[0].value as i64, base_token_info.decimals);
+                let counter_volume = Decimal::new(
+                    self.amounts.pseudo_output.value as i64,
+                    counter_token_info.decimals,
+                );
+                let volume = Decimal::new(
+                    self.amounts.required_outputs[0].value as i64,
+                    base_token_info.decimals,
+                );
                 let price = counter_volume / volume;
                 Ok(QuoteInfo {
                     quote_side,
@@ -179,7 +214,7 @@ impl ValidatedQuote {
 #[derive(Clone, Debug)]
 pub enum QuoteSide {
     Bid,
-    Ask
+    Ask,
 }
 
 /// Information about a quote that we render in the ui
@@ -190,7 +225,7 @@ pub struct QuoteInfo {
 
     /// The price of the base token in units of the counter token, implied by this quote
     pub price: Decimal,
-    
+
     /// The maximum volume of base token for this quote.
     pub volume: Decimal,
 
@@ -199,4 +234,115 @@ pub struct QuoteInfo {
 
     /// Timestamp of the quote
     pub timestamp: u64,
+}
+
+/// The output of a quote selection algorithm that tries to find the best quote to obtain one amount.
+#[derive(Clone, Debug)]
+pub struct QuoteSelection {
+    // The sci we selected
+    pub sci: SignedContingentInput,
+    // The partial fill value to use when adding this to a Tx
+    pub partial_fill_value: u64,
+    // The u64 value which must be supplied to fulfill this quote
+    pub from_u64_value: u64,
+    // The from value as a scaled Decimal
+    pub from_value_decimal: Decimal,
+}
+
+impl QuoteSelection {
+    /// Try to select the best quote to obtain `to_amount`, paying `from_token_id`.
+    /// These should all be quotes from the right book type, or warnings will be logged.
+    ///
+    /// If there is no appropriate quote, returns "insufficient liquidity".
+    pub fn new(
+        quote_book: &[ValidatedQuote],
+        from_token_id: TokenId,
+        from_token_info: &TokenInfo,
+        to_amount: Amount,
+    ) -> Result<QuoteSelection, String> {
+        let mut candidates: Vec<QuoteSelection> = Default::default();
+        for quote in quote_book {
+            if quote.amounts.pseudo_output.token_id != to_amount.token_id {
+                event!(Level::WARN, "unexpected token id mismatch");
+                continue;
+            }
+
+            if let Some(partial_fill_change) = quote.amounts.partial_fill_change.as_ref() {
+                if &quote.amounts.pseudo_output != partial_fill_change {
+                    event!(Level::WARN, "SCI too complicated");
+                    continue;
+                }
+
+                if quote.amounts.pseudo_output.value < to_amount.value {
+                    // This just means there isn't enough liquidity in this SCI
+                    continue;
+                }
+
+                let balance_sheet = match quote.amounts.compute_balance_sheet(to_amount.value) {
+                    Ok(balance_sheet) => balance_sheet,
+                    Err(err) => {
+                        event!(Level::WARN, "Could not compute balances of SCI: {}", err);
+                        continue;
+                    }
+                };
+
+                if balance_sheet.len() != 2 {
+                    event!(Level::WARN, "SCI too complicated: {:?}", balance_sheet);
+                    continue;
+                }
+
+                if let Some(val) = balance_sheet.get(&from_token_id) {
+                    let from_u64_value = *val as u64;
+                    // FIXME: check for overflow
+                    let from_value_decimal =
+                        Decimal::new(from_u64_value as i64, from_token_info.decimals);
+                    candidates.push(QuoteSelection {
+                        sci: quote.sci.clone(),
+                        partial_fill_value: to_amount.value,
+                        from_u64_value,
+                        from_value_decimal,
+                    });
+                } else {
+                    event!(Level::WARN, "unexpected token id mismatch");
+                }
+            } else {
+                if quote.amounts.pseudo_output.value != to_amount.value {
+                    continue;
+                }
+
+                let balance_sheet = match quote.amounts.compute_balance_sheet(0) {
+                    Ok(balance_sheet) => balance_sheet,
+                    Err(err) => {
+                        event!(Level::WARN, "Could not compute balances of SCI: {}", err);
+                        continue;
+                    }
+                };
+
+                if balance_sheet.len() != 2 {
+                    event!(Level::WARN, "SCI too complicated: {:?}", balance_sheet);
+                    continue;
+                }
+
+                if let Some(val) = balance_sheet.get(&from_token_id) {
+                    let from_u64_value = *val as u64;
+                    // FIXME: check for overflow
+                    let from_value_decimal =
+                        Decimal::new(from_u64_value as i64, from_token_info.decimals);
+                    candidates.push(QuoteSelection {
+                        sci: quote.sci.clone(),
+                        partial_fill_value: 0,
+                        from_u64_value,
+                        from_value_decimal,
+                    });
+                } else {
+                    event!(Level::WARN, "unexpected token id mismatch");
+                }
+            }
+        }
+        candidates.sort_by_key(|qs| qs.from_u64_value);
+        candidates
+            .get(0)
+            .cloned()
+            .ok_or("insufficient liquidity".to_owned())
+    }
 }

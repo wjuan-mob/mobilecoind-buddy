@@ -1,9 +1,8 @@
-use crate::{Amount, Config, TokenId, TokenInfo, ValidatedQuote, Worker};
+use crate::{Amount, Config, QuoteSelection, TokenId, TokenInfo, Worker};
 use egui::{
     Align, Button, CentralPanel, Color32, ComboBox, Grid, Layout, RichText, ScrollArea,
     TopBottomPanel,
 };
-use mc_transaction_extra::SignedContingentInput;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -130,15 +129,6 @@ impl App {
             let scaled_value_str = values.entry(*token_id).or_insert_with(|| "0".to_string());
             ui.text_edit_singleline(scaled_value_str);
         });
-    }
-
-    // Helper which performs quote selection from a quote book
-    fn quote_selection(
-        quote_book: &[ValidatedQuote],
-        from_u64_value: u64,
-        to_u64_value: u64,
-    ) -> Result<(SignedContingentInput, u64), String> {
-        unimplemented!();
     }
 }
 
@@ -268,7 +258,13 @@ impl eframe::App for App {
                         ui.text_edit_singleline(&mut self.send_to);
                     });
 
-                    Self::amount_selector(ui, "Amount", &token_infos, &mut self.send_token_id, &mut self.send_value);
+                    Self::amount_selector(
+                        ui,
+                        "Amount",
+                        &token_infos,
+                        &mut self.send_token_id,
+                        &mut self.send_value,
+                    );
 
                     let current_token_info: Option<&TokenInfo> = token_infos
                         .iter()
@@ -343,13 +339,26 @@ impl eframe::App for App {
                         return;
                     }
 
-                    Self::amount_selector(ui, "Swap from", &token_infos, &mut self.swap_from_token_id, &mut self.swap_from_value);
+                    Self::amount_selector(
+                        ui,
+                        "Swap from",
+                        &token_infos,
+                        &mut self.swap_from_token_id,
+                        &mut self.swap_from_value,
+                    );
                     ui.label("↓");
-                    Self::amount_selector(ui, "Swap to", &token_infos, &mut self.swap_to_token_id, &mut self.swap_to_value);
+                    Self::amount_selector(
+                        ui,
+                        "Swap to",
+                        &token_infos,
+                        &mut self.swap_to_token_id,
+                        &mut self.swap_to_value,
+                    );
 
                     worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
 
-                    let quote_book = worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id);
+                    let quote_book =
+                        worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id);
 
                     let swap_from_token_info: Option<&TokenInfo> = token_infos
                         .iter()
@@ -360,25 +369,44 @@ impl eframe::App for App {
                         .find(|info| info.token_id == self.swap_to_token_id);
 
                     // Returns an SCI we selected to swap against, and the partial fill value to fill it to, or an error message
-                    let okay_to_submit: Result<(SignedContingentInput, u64), String> = swap_from_token_info.zip(swap_to_token_info)
+                    let okay_to_submit: Result<QuoteSelection, String> = swap_from_token_info
+                        .zip(swap_to_token_info)
                         .ok_or("".to_string())
-                        .and_then(|(from_info, to_info)| -> Result<(SignedContingentInput, u64), String> {
+                        .and_then(|(from_info, to_info)| -> Result<QuoteSelection, String> {
                             if self.swap_from_token_id == self.swap_to_token_id {
                                 return Err("".to_string());
                             }
 
-                            let from_u64_value = from_info.try_scaled_to_u64(self.swap_from_value.entry(self.swap_from_token_id).or_insert_with(|| "0".to_string()))?;
-                            let to_u64_value = to_info.try_scaled_to_u64(self.swap_to_value.entry(self.swap_to_token_id).or_insert_with(|| "0".to_string()))?;
+                            //let from_u64_value = from_info.try_scaled_to_u64(self.swap_from_value.entry(self.swap_from_token_id).or_insert_with(|| "0".to_string()))?;
+                            let to_u64_value = to_info.try_scaled_to_u64(
+                                self.swap_to_value
+                                    .entry(self.swap_to_token_id)
+                                    .or_insert_with(|| "0".to_string()),
+                            )?;
 
-                            Self::quote_selection(&quote_book, from_u64_value, to_u64_value)
+                            let to_amount = Amount::new(to_u64_value, self.swap_to_token_id);
+                            QuoteSelection::new(
+                                &quote_book,
+                                self.swap_from_token_id,
+                                from_info,
+                                to_amount,
+                            )
                         });
 
                     match okay_to_submit {
-                        Ok((sci, partial_fill_value)) => {
+                        Ok(qs) => {
+                            *self
+                                .swap_from_value
+                                .entry(self.swap_from_token_id)
+                                .or_default() = qs.from_value_decimal.to_string();
                             ui.label("");
                             if ui.button("Submit").clicked() {
                                 // We pay the fee in the from_token_id
-                                worker.perform_swap(sci, partial_fill_value, self.swap_from_token_id);
+                                worker.perform_swap(
+                                    qs.sci,
+                                    qs.partial_fill_value,
+                                    self.swap_from_token_id,
+                                );
                             }
                         }
                         Err(err_str) => {
@@ -413,7 +441,11 @@ impl eframe::App for App {
                             )
                             .show_ui(ui, |ui| {
                                 for info in token_infos.iter() {
-                                    ui.selectable_value(&mut self.base_token_id, info.token_id, info.symbol.clone());
+                                    ui.selectable_value(
+                                        &mut self.base_token_id,
+                                        info.token_id,
+                                        info.symbol.clone(),
+                                    );
                                 }
                             });
                         ui.label("/");
@@ -425,24 +457,34 @@ impl eframe::App for App {
                             )
                             .show_ui(ui, |ui| {
                                 for info in token_infos.iter() {
-                                    ui.selectable_value(&mut self.counter_token_id, info.token_id, info.symbol.clone());
+                                    ui.selectable_value(
+                                        &mut self.counter_token_id,
+                                        info.token_id,
+                                        info.symbol.clone(),
+                                    );
                                 }
                             });
-                    });                        
+                    });
 
                     worker.get_quotes_for_token_ids(self.base_token_id, self.counter_token_id);
 
                     // In these states, we can't proceed, don't render any more ui.
-                    if self.base_token_id == self.counter_token_id { return; }
+                    if self.base_token_id == self.counter_token_id {
+                        return;
+                    }
 
                     let base_token_info = match base_token_info {
                         Some(base_token_info) => base_token_info,
-                        None => { return; }
+                        None => {
+                            return;
+                        }
                     };
 
                     let counter_token_info = match counter_token_info {
                         Some(counter_token_info) => counter_token_info,
-                        None => { return; }
+                        None => {
+                            return;
+                        }
                     };
 
                     // User-specified volumes of the chosen tokens
@@ -456,37 +498,61 @@ impl eframe::App for App {
                     });
 
                     let base_u64_value = base_token_info.try_scaled_to_u64(&self.base_volume);
-                    let counter_u64_value = counter_token_info.try_scaled_to_u64(&self.counter_volume);
+                    let counter_u64_value =
+                        counter_token_info.try_scaled_to_u64(&self.counter_volume);
 
                     // True if we have enough to conduct a buy
-                    let sufficient_counter_balance = counter_u64_value.clone().map(|u64_value|
-                         *balances.entry(self.counter_token_id).or_default() >= u64_value).unwrap_or(false);
+                    let sufficient_counter_balance = counter_u64_value
+                        .clone()
+                        .map(|u64_value| {
+                            *balances.entry(self.counter_token_id).or_default() >= u64_value
+                        })
+                        .unwrap_or(false);
                     let buy_is_possible = sufficient_counter_balance && base_u64_value.is_ok();
 
                     // True if we have enough to conduct a sell
-                    let sufficient_base_balance = base_u64_value.clone().map(|u64_value|
-                         *balances.entry(self.base_token_id).or_default() >= u64_value).unwrap_or(false);
-                    let sell_is_possible = sufficient_counter_balance && counter_u64_value.is_ok();
+                    let sufficient_base_balance = base_u64_value
+                        .clone()
+                        .map(|u64_value| {
+                            *balances.entry(self.base_token_id).or_default() >= u64_value
+                        })
+                        .unwrap_or(false);
+                    let sell_is_possible = sufficient_base_balance && counter_u64_value.is_ok();
 
                     // Add buy and sell buttons
                     ui.horizontal(|ui| {
-                        if ui.add_enabled(buy_is_possible, Button::new("Buy")).clicked() {
-                            let from_amount = Amount::new(counter_u64_value.clone().unwrap(), self.counter_token_id);
-                            let to_amount = Amount::new(base_u64_value.clone().unwrap(), self.base_token_id);
-                            worker.offer_swap(from_amount, to_amount);                        
+                        if ui
+                            .add_enabled(buy_is_possible, Button::new("Buy"))
+                            .clicked()
+                        {
+                            let from_amount = Amount::new(
+                                counter_u64_value.clone().unwrap(),
+                                self.counter_token_id,
+                            );
+                            let to_amount =
+                                Amount::new(base_u64_value.clone().unwrap(), self.base_token_id);
+                            worker.offer_swap(from_amount, to_amount);
                         }
-                        if ui.add_enabled(sell_is_possible, Button::new("Sell")).clicked() {
-                            let from_amount = Amount::new(base_u64_value.unwrap(), self.base_token_id);
-                            let to_amount = Amount::new(counter_u64_value.unwrap(), self.counter_token_id);
+                        if ui
+                            .add_enabled(sell_is_possible, Button::new("Sell"))
+                            .clicked()
+                        {
+                            let from_amount =
+                                Amount::new(base_u64_value.unwrap(), self.base_token_id);
+                            let to_amount =
+                                Amount::new(counter_u64_value.unwrap(), self.counter_token_id);
                             worker.offer_swap(from_amount, to_amount);
                         }
                     });
-                    
+
                     ui.separator();
 
                     // Show the quote book
 
-                    let books = [worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id), worker.get_quote_book(self.swap_from_token_id, self.swap_to_token_id)];
+                    let books = [
+                        worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id),
+                        worker.get_quote_book(self.swap_from_token_id, self.swap_to_token_id),
+                    ];
                     let headings = ["Bid", "Ask"];
 
                     ScrollArea::vertical().show(ui, |ui| {
@@ -502,15 +568,19 @@ impl eframe::App for App {
                                     ui.end_row();
 
                                     for validated_quote in books.get(idx).unwrap() {
-                                        match validated_quote.get_quote_info(self.base_token_id, self.counter_token_id, &token_infos) {
+                                        match validated_quote.get_quote_info(
+                                            self.base_token_id,
+                                            self.counter_token_id,
+                                            &token_infos,
+                                        ) {
                                             Ok(info) => {
                                                 ui.label(info.price.to_string());
                                                 ui.label(info.volume.to_string());
                                                 ui.end_row();
-                                            },
+                                            }
                                             Err(err) => {
                                                 event!(Level::ERROR, "get quote info: {}", err);
-                                            },
+                                            }
                                         }
                                     }
                                 });
