@@ -1,4 +1,4 @@
-use crate::{Amount, Config, ConnectionUriGrpcioChannel, TokenId, TokenInfo};
+use crate::{Amount, Config, ConnectionUriGrpcioChannel, TokenId, TokenInfo, ValidatedQuote};
 use deqs_api::{deqs as d_api, deqs_grpc::DeqsClientApiClient as DeqsClient};
 use displaydoc::Display;
 use grpcio::ChannelBuilder;
@@ -60,7 +60,7 @@ struct WorkerState {
     /// Empty if the user is not trying to swap right now
     pub get_quotes_token_ids: Option<(TokenId, TokenId)>,
     /// The quotes we currently know about in the quote books
-    pub quote_books: HashMap<(TokenId, TokenId), Vec<d_api::Quote>>,
+    pub quote_books: HashMap<(TokenId, TokenId), Vec<ValidatedQuote>>,
     /// A buffer of errors
     pub errors: VecDeque<String>,
 }
@@ -211,7 +211,7 @@ impl Worker {
     }
 
     /// Get the quote book for a given pair
-    pub fn get_quote_book(&self, tok1: TokenId, tok2: TokenId) -> Vec<d_api::Quote> {
+    pub fn get_quote_book(&self, tok1: TokenId, tok2: TokenId) -> Vec<ValidatedQuote> {
         self.state
             .lock()
             .unwrap()
@@ -587,12 +587,17 @@ impl Worker {
                     *base_token_id,
                     *counter_token_id
                 );
-                let mut resp = client.get_quotes(&req)?;
+                let resp = client.get_quotes(&req)?;
+                let validated_quotes: Vec<ValidatedQuote> = resp.get_quotes().iter().filter_map(|quote|
+                    match ValidatedQuote::try_from(quote) {
+                        Ok(validated_quote) => Some(validated_quote),
+                        Err(err) => { event!(Level::ERROR, "validating quote: {}", err); None }
+                    }).collect();
                 {
                     let mut st = state.lock().unwrap();
                     *st.quote_books
                         .entry((base_token_id, counter_token_id))
-                        .or_default() = resp.take_quotes().to_vec();
+                        .or_default() = validated_quotes;
                 }
             }
         }
