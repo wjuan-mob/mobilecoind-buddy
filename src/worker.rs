@@ -4,7 +4,7 @@ use displaydoc::Display;
 use grpcio::ChannelBuilder;
 use mc_account_keys::AccountKey;
 use mc_api::{external, printable::PrintableWrapper};
-use mc_mobilecoind_api::{self as mcd_api, mobilecoind_api_grpc::MobilecoindApiClient};
+use mc_mobilecoind_api::{self as mcd_api, TxStatus, mobilecoind_api_grpc::MobilecoindApiClient};
 use mc_transaction_extra::SignedContingentInput;
 use mc_util_keyfile::read_keyfile;
 use std::collections::{HashMap, VecDeque};
@@ -34,6 +34,8 @@ pub struct Worker {
     account_key: AccountKey,
     /// The monitor id we registered account with in mobilecoind
     monitor_id: Vec<u8>,
+    /// The proto public address of this account
+    monitor_public_address: external::PublicAddress,
     /// The b58 public address of this account
     monitor_b58_address: String,
     /// The minimum fees for this network
@@ -86,7 +88,7 @@ impl Worker {
         let mobilecoind_api_client = MobilecoindApiClient::new(ch);
 
         let mut retries = 10;
-        let (monitor_id, _monitor_public_address, monitor_b58_address, minimum_fees) = loop {
+        let (monitor_id, monitor_public_address, monitor_b58_address, minimum_fees) = loop {
             match Self::try_new_mobilecoind(&mobilecoind_api_client, &account_key) {
                 Ok(result) => break result,
                 Err(err) => event!(Level::ERROR, "Initialization failed, will retry: {}", err),
@@ -134,6 +136,7 @@ impl Worker {
             deqs_client,
             account_key,
             monitor_id,
+            monitor_public_address,
             monitor_b58_address,
             minimum_fees,
             state,
@@ -274,12 +277,108 @@ impl Worker {
 
     /// Create and submit a swap offer
     pub fn offer_swap(&self, from_amount: Amount, to_amount: Amount) {
-        unimplemented!();
+        span!(Level::INFO, "offer_swap");
+        // FIXME: There should not be any unwraps, we should split this out into a helper function probably
+        let mut retries = 3;
+        let selected_utxo = loop {
+            let mut request = mcd_api::GetUnspentTxOutListRequest::new();
+            request.set_monitor_id(self.monitor_id.clone());
+            request.set_subaddress_index(0);
+            request.set_token_id(*from_amount.token_id);
+            let response = self.mobilecoind_api_client.get_unspent_tx_out_list(&request).unwrap();
+
+            if let Some(utxo) = response.output_list.iter().find(|utxo|
+                utxo.token_id == *from_amount.token_id && utxo.value == from_amount.value) {
+                break utxo.clone();
+            }
+            retries -= 1;
+            if retries == 0 {
+                let err_msg = "failed to produce input of required value".to_owned();
+                event!(Level::ERROR, err_msg);
+                let mut st = self.state.lock().unwrap();
+                st.errors.push_back(err_msg);
+            }
+            // Produce a self-payment in this amount, then wait for it to land
+            span!(Level::INFO, "self payment");
+            event!(Level::INFO, "attempting self payment before swap offer");
+            let mut outlay = mcd_api::Outlay::new();
+            outlay.set_value(from_amount.value);
+            outlay.set_receiver(self.monitor_public_address.clone());
+            let mut request = mcd_api::SendPaymentRequest::new();
+            request.set_sender_monitor_id(self.monitor_id.clone());
+            request.set_sender_subaddress(0);
+            request.set_token_id(*from_amount.token_id);
+            request.set_outlay_list(vec![outlay].into());
+            let mut response = self.mobilecoind_api_client.send_payment(&request).unwrap();
+
+            // Coerce this into a SubmitTxResponse, so that we can use it with get_tx_status_as_sender
+            let mut submit_tx_response = mcd_api::SubmitTxResponse::new();
+            submit_tx_response.set_sender_tx_receipt(response.take_sender_tx_receipt());
+            submit_tx_response.set_receiver_tx_receipt_list(response.take_receiver_tx_receipt_list());
+
+            // Wait for self payment to land
+            loop {
+                let resp = self.mobilecoind_api_client.get_tx_status_as_sender(&submit_tx_response).unwrap();
+                std::thread::sleep(Duration::from_millis(50));
+                if resp.status != TxStatus::Unknown && resp.status != TxStatus::Verified {
+                    event!(Level::WARN, "got a strange status from self payment Tx: {:?}", resp.status);
+                }
+                if resp.status != TxStatus::Unknown {
+                    break;
+                }
+            }
+        };
+
+        // Ask mobilecoind to sign an SCI over this input
+        let mut request = mcd_api::GenerateSwapRequest::new();
+        request.set_sender_monitor_id(self.monitor_id.clone());
+        request.set_change_subaddress(0);
+        request.set_input(selected_utxo);
+        request.set_allow_partial_fill(true);
+        request.set_counter_value(to_amount.value);
+        request.set_counter_token_id(*to_amount.token_id);
+        // Arbitrarily, minimum fill value is 10 * minimum_fee
+        let min_fill_value = self.minimum_fees.get(&from_amount.token_id).cloned().unwrap_or(0) * 10;
+        request.set_minimum_fill_value(min_fill_value);
+        let mut response = self.mobilecoind_api_client.generate_swap(&request).unwrap();
+
+        // Submit the generated sci to the deqs
+        let mut request = d_api::SubmitQuotesRequest::new();
+        request.set_quotes(vec![response.take_sci()].into());
+        let response = self.deqs_client.as_ref().unwrap().submit_quotes(&request).unwrap();
+        // Handle any error messages
+        if response.error_messages.len() == 0 {
+            event!(Level::INFO, "submitted swap offer successfully");
+        } else {
+            let err_msg = response.error_messages[0].clone();
+            event!(Level::INFO, "failed to submit swap offer: {}", err_msg);
+            let mut st = self.state.lock().unwrap();
+            st.errors.push_back(err_msg);
+        }
     }
 
     /// Act as the counterparty to a given swap
-    pub fn perform_swap(&self, sci: SignedContingentInput, partial_fill_value: u64) {
-        unimplemented!();
+    pub fn perform_swap(&self, sci: SignedContingentInput, partial_fill_value: u64, fee_token_id: TokenId) {
+        let mut sci_for_tx = mcd_api::SciForTx::new();
+        sci_for_tx.set_sci((&sci).into());
+        sci_for_tx.set_partial_fill_value(partial_fill_value);
+
+        let mut req = mcd_api::GenerateMixedTxRequest::new();
+        req.set_sender_monitor_id(self.monitor_id.clone());
+        req.set_change_subaddress(0);
+        req.set_scis(vec![sci_for_tx].into());
+        req.set_fee_token_id(*fee_token_id);
+
+        match self.mobilecoind_api_client.generate_mixed_tx(&req) {
+            Ok(_resp) => {
+                event!(Level::INFO, "submitted swap tx successfully");
+            },
+            Err(err) => {
+                event!(Level::ERROR, "failed to submit swap tx: {}", err);
+                let mut st = self.state.lock().unwrap();
+                st.errors.push_back(err.to_string());
+            },
+        }
     }
 
     /// Get the error at the front of the error queue, if any.

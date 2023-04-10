@@ -364,7 +364,8 @@ impl eframe::App for App {
                         Ok((sci, partial_fill_value)) => {
                             ui.label("");
                             if ui.button("Submit").clicked() {
-                                worker.perform_swap(sci, partial_fill_value);
+                                // We pay the fee in the from_token_id
+                                worker.perform_swap(sci, partial_fill_value, self.swap_from_token_id);
                             }
                         }
                         Err(err_str) => {
@@ -428,13 +429,13 @@ impl eframe::App for App {
                     let headings = ["Bid", "Ask"];
 
                     ui.separator();
-                    ui.columns(2, |columns| {
-                        for idx in 0..2 {
-                            let ui = &mut columns[idx];
+                    ScrollArea::vertical().show(ui, |ui| {
+                        ui.columns(2, |columns| {
+                            for idx in 0..2 {
+                                let ui = &mut columns[idx];
 
-                            ui.heading(headings[idx]);
+                                ui.heading(headings[idx]);
 
-                            ScrollArea::vertical().show(ui, |ui| {
                                 Grid::new(format!("{}_table", headings[idx])).show(ui, |ui| {
                                     ui.label("Price");
                                     ui.label("Volume");
@@ -446,8 +447,8 @@ impl eframe::App for App {
                                         ui.end_row();
                                     }
                                 });
-                            });
-                        }
+                            }
+                        });
                     });
                 }
             }
