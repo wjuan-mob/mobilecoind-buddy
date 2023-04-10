@@ -1,6 +1,6 @@
 use clap::Parser;
-use mc_mobilecoind_api::MobilecoindUri;
 use deqs_api::DeqsClientUri;
+use mc_mobilecoind_api::MobilecoindUri;
 use std::path::PathBuf;
 
 /// Command line config, set with defaults that will work with
@@ -21,9 +21,6 @@ pub struct Config {
     pub mobilecoind_uri: MobilecoindUri,
 
     /// Deqs URI. (Optional)
-    #[clap(
-        long,
-        env = "MC_DEQS_URI"
-    )]
+    #[clap(long, env = "MC_DEQS_URI")]
     pub deqs_uri: Option<DeqsClientUri>,
 }

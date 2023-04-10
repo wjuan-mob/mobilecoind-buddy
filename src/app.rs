@@ -1,7 +1,10 @@
-use crate::{Config, TokenId, TokenInfo, Worker, Amount};
-use egui::{Align, Button, CentralPanel, Color32, ComboBox, Grid, Layout, RichText, ScrollArea, TopBottomPanel};
+use crate::{Amount, Config, TokenId, TokenInfo, Worker};
+use egui::{
+    Align, Button, CentralPanel, Color32, ComboBox, Grid, Layout, RichText, ScrollArea,
+    TopBottomPanel,
+};
 use mc_transaction_extra::SignedContingentInput;
-use rust_decimal::{Decimal};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,39 +90,41 @@ impl App {
     /// * token_infos, obtained from worker.get_token_infos
     /// * token_id, mutable reference to state this widget is selecting
     /// * values, mutable reference to the value strings this widget is selecting. These are scaled by the user.
-    fn amount_selector(ui: &mut egui::Ui, context: &str, token_infos: &[TokenInfo], token_id: &mut TokenId, values: &mut HashMap<TokenId, String>) {
-                    let current_token_info: Option<&TokenInfo> = token_infos
-                        .iter()
-                        .find(|info| info.token_id == *token_id);
+    fn amount_selector(
+        ui: &mut egui::Ui,
+        context: &str,
+        token_infos: &[TokenInfo],
+        token_id: &mut TokenId,
+        values: &mut HashMap<TokenId, String>,
+    ) {
+        let current_token_info: Option<&TokenInfo> =
+            token_infos.iter().find(|info| info.token_id == *token_id);
 
-                    ui.horizontal(|ui| {
-                        ui.label(context);
-                        ComboBox::from_id_source(context)
-                            .selected_text(
-                                current_token_info
-                                    .map(|info| info.symbol.clone())
-                                    .unwrap_or_default(),
-                            )
-                            .show_ui(ui, |ui| {
-                                for info in token_infos.iter() {
-                                    ui.selectable_value(
-                                        token_id,
-                                        info.token_id,
-                                        info.symbol.clone(),
-                                    );
-                                }
-                            });
+        ui.horizontal(|ui| {
+            ui.label(context);
+            ComboBox::from_id_source(context)
+                .selected_text(
+                    current_token_info
+                        .map(|info| info.symbol.clone())
+                        .unwrap_or_default(),
+                )
+                .show_ui(ui, |ui| {
+                    for info in token_infos.iter() {
+                        ui.selectable_value(token_id, info.token_id, info.symbol.clone());
+                    }
+                });
 
-                        let scaled_value_str = values
-                            .entry(*token_id)
-                            .or_insert_with(|| "0".to_string());
-                        ui.text_edit_singleline(scaled_value_str);
-                    });
-    
+            let scaled_value_str = values.entry(*token_id).or_insert_with(|| "0".to_string());
+            ui.text_edit_singleline(scaled_value_str);
+        });
     }
 
     // Helper which performs quote selection from a quote book
-    fn quote_selection(quote_book: &[deqs_api::deqs::Quote], from_u64_value: u64, to_u64_value: u64) -> Result<(SignedContingentInput, u64), String> {
+    fn quote_selection(
+        quote_book: &[deqs_api::deqs::Quote],
+        from_u64_value: u64,
+        to_u64_value: u64,
+    ) -> Result<(SignedContingentInput, u64), String> {
         unimplemented!();
     }
 }
@@ -203,13 +208,19 @@ impl eframe::App for App {
                 columns[2].vertical_centered(|ui| {
                     if ui.button("Swap").clicked() {
                         self.mode = Mode::Swap;
-                        worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
+                        worker.get_quotes_for_token_ids(
+                            self.swap_to_token_id,
+                            self.swap_from_token_id,
+                        );
                     }
                 });
                 columns[3].vertical_centered(|ui| {
                     if ui.button("Offer Swap").clicked() {
                         self.mode = Mode::OfferSwap;
-                        worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
+                        worker.get_quotes_for_token_ids(
+                            self.swap_to_token_id,
+                            self.swap_from_token_id,
+                        );
                     }
                 });
             });
@@ -436,7 +447,6 @@ impl eframe::App for App {
                                     }
                                 });
                             });
-                            
                         }
                     });
                 }

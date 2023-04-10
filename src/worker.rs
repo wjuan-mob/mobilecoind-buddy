@@ -99,8 +99,7 @@ impl Worker {
         };
 
         let deqs_client = config.deqs_uri.as_ref().map(|uri| {
-            let ch = ChannelBuilder::default_channel_builder(grpc_env)
-                .connect_to_uri(uri);
+            let ch = ChannelBuilder::default_channel_builder(grpc_env).connect_to_uri(uri);
 
             DeqsClient::new(ch)
         });
@@ -205,12 +204,18 @@ impl Worker {
 
     /// Tell the worker it can stop getting quotes
     pub fn stop_quotes(&self) {
-        self.state.lock().unwrap().get_quotes_token_ids = None;    
+        self.state.lock().unwrap().get_quotes_token_ids = None;
     }
 
     /// Get the quote book for a given pair
     pub fn get_quote_book(&self, tok1: TokenId, tok2: TokenId) -> Vec<d_api::Quote> {
-        self.state.lock().unwrap().quote_books.get(&(tok1, tok2)).cloned().unwrap_or(Default::default())
+        self.state
+            .lock()
+            .unwrap()
+            .quote_books
+            .get(&(tok1, tok2))
+            .cloned()
+            .unwrap_or(Default::default())
     }
 
     /// Decode a b58 address
@@ -389,10 +394,8 @@ impl Worker {
                 continue;
             }
 
-            if let Some(deqs_client) = deqs_client.as_ref() {            
-                if let Err(err) =
-                    Self::poll_deqs(deqs_client, &state)
-                {
+            if let Some(deqs_client) = deqs_client.as_ref() {
+                if let Err(err) = Self::poll_deqs(deqs_client, &state) {
                     event!(Level::ERROR, "polling deqs: {}", err);
                     {
                         let mut st = state.lock().unwrap();
@@ -459,16 +462,18 @@ impl Worker {
         client: &DeqsClient,
         state: &Arc<Mutex<WorkerState>>,
     ) -> Result<(), grpcio::Error> {
-        let maybe_tokens = {
-            state.lock().unwrap().get_quotes_token_ids.clone()
-        };
+        let maybe_tokens = { state.lock().unwrap().get_quotes_token_ids.clone() };
         // Only do the poll if the ui thread told us we're looking at two particular tokens,
         // and then only if they are different tokens.
         if let Some((token1, token2)) = maybe_tokens {
-            if token1 == token2 { return Ok(()); }
+            if token1 == token2 {
+                return Ok(());
+            }
             span!(Level::TRACE, "poll deqs");
 
-            for (base_token_id, counter_token_id) in vec![(token1, token2), (token2, token1)].into_iter() {
+            for (base_token_id, counter_token_id) in
+                vec![(token1, token2), (token2, token1)].into_iter()
+            {
                 let mut pair = d_api::Pair::new();
                 pair.set_base_token_id(*base_token_id);
                 pair.set_counter_token_id(*counter_token_id);
@@ -477,11 +482,18 @@ impl Worker {
                 req.set_pair(pair);
                 req.set_limit(QUOTES_LIMIT);
 
-                event!(Level::TRACE, "getting quotes for pair {} / {}", *base_token_id, *counter_token_id);
+                event!(
+                    Level::TRACE,
+                    "getting quotes for pair {} / {}",
+                    *base_token_id,
+                    *counter_token_id
+                );
                 let mut resp = client.get_quotes(&req)?;
                 {
                     let mut st = state.lock().unwrap();
-                    *st.quote_books.entry((base_token_id, counter_token_id)).or_default() = resp.take_quotes().to_vec();
+                    *st.quote_books
+                        .entry((base_token_id, counter_token_id))
+                        .or_default() = resp.take_quotes().to_vec();
                 }
             }
         }
