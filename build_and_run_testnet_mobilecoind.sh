@@ -13,6 +13,7 @@ export MC_LOG=info,rustls=warn,hyper=warn,tokio_reactor=warn,mio=warn,want=warn,
 
 ./tools/download_sigstruct.sh
 export CONSENSUS_ENCLAVE_CSS=$(pwd)/consensus-enclave.css
+export MC_FOG_INGEST_ENCLAVE_CSS=$(pwd)/ingest-enclave.css
 
 mkdir -p /tmp/testnet
 

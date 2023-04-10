@@ -8,7 +8,8 @@ It is written in rust using [`egui`](https://github.com/emilk/egui). (This makes
 we can import the rust API crates and get all the nice type checking, compared to python.)
 
 This is a rapid prototype meant for demos or for developer use. It isn't really meant to be a user-facing product
-and may have some rough edges.
+and may have some rough edges, particularly around starting it. However, it has been engineered with proper architecture
+and error handling, and should be good at what it does.
 
 ## Quickstart
 

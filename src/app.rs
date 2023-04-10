@@ -125,10 +125,10 @@ impl eframe::App for App {
                 // Check if the worker has reported any error, if so, show it
                 ui.horizontal(|ui| {
                     if let Some(err_str) = worker.top_error() {
-                        ui.label(RichText::new(err_str).color(Color32::from_rgb(255, 0, 0)));
-                        if ui.button("Close").clicked() {
+                        if ui.button("⊗").clicked() {
                             worker.pop_error();
                         }
+                        ui.label(RichText::new(err_str).color(Color32::from_rgb(255, 0, 0)));
                     } else {
                         ui.label("");
                     }
