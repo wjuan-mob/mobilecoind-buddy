@@ -191,7 +191,7 @@ impl eframe::App for App {
                         .find(|info| info.token_id == self.send_token_id);
 
                     ui.horizontal(|ui| {
-                        egui::ComboBox::from_label("Token")
+                        egui::ComboBox::from_id_source("Token")
                             .selected_text(
                                 current_token_info
                                     .map(|info| info.symbol.clone())
@@ -218,6 +218,29 @@ impl eframe::App for App {
                         .send_value
                         .entry(self.send_token_id)
                         .or_insert_with(|| "0".to_string());
+
+                    match current_token_info.as_ref() {
+                        Some(info) => {
+                            let scale = Decimal::new(1, info.decimals);
+                            if let Some(balance) =
+                                Decimal::from(*balances.entry(self.send_token_id).or_default())
+                                    .checked_mul(scale)
+                            {
+                                ui.label(format!("balance: {}", balance.to_string()));
+                            } else {
+                                ui.label("balance: (overflow)");
+                            }
+                            if let Some(fee) = Decimal::from(info.fee).checked_mul(scale) {
+                                ui.label(format!("fee: {}", fee.to_string()));
+                            } else {
+                                ui.label("fee: (overflow)");
+                            }
+                        }
+                        None => {
+                            ui.label("balance:");
+                            ui.label("fee:");
+                        }
+                    }
 
                     // This either the u64 value of the token to send, or a string error to display
                     let okay_to_submit: Result<u64, String> = current_token_info
