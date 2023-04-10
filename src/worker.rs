@@ -1,10 +1,11 @@
-use crate::{Config, ConnectionUriGrpcioChannel, TokenId, TokenInfo};
-//use rust_decimal::Decimal;
+use crate::{Amount, Config, ConnectionUriGrpcioChannel, TokenId, TokenInfo};
+use deqs_api::{deqs as d_api, deqs_grpc::DeqsClientApiClient as DeqsClient};
 use displaydoc::Display;
 use grpcio::ChannelBuilder;
 use mc_account_keys::AccountKey;
 use mc_api::{external, printable::PrintableWrapper};
-use mc_mobilecoind_api::{self as api, mobilecoind_api_grpc::MobilecoindApiClient};
+use mc_mobilecoind_api::{self as mcd_api, mobilecoind_api_grpc::MobilecoindApiClient};
+use mc_transaction_extra::SignedContingentInput;
 use mc_util_keyfile::read_keyfile;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
@@ -15,6 +16,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tracing::{event, span, Level};
 
+const QUOTES_LIMIT: u64 = 10;
+
 /// The state and handle to the background worker, which owns the server connections.
 /// This object exposes various getters to help the UI render the correct data without
 /// blocking the UI thread, and allows for things like submitting a transaction.
@@ -24,6 +27,8 @@ pub struct Worker {
     config: Config,
     /// The connection to mobilecoind
     mobilecoind_api_client: MobilecoindApiClient,
+    /// The connection to deqs (if any)
+    deqs_client: Option<DeqsClient>,
     /// The account key holding our funds
     #[allow(unused)]
     account_key: AccountKey,
@@ -41,6 +46,7 @@ pub struct Worker {
     stop_requested: Arc<AtomicBool>,
 }
 
+#[derive(Default)]
 struct WorkerState {
     /// Synced blocks on this monitor id
     pub synced_blocks: u64,
@@ -48,6 +54,11 @@ struct WorkerState {
     pub total_blocks: u64,
     /// The current balance of this account
     pub balance: HashMap<TokenId, u64>,
+    /// The current token ids to poll for deqs
+    /// Empty if the user is not trying to swap right now
+    pub get_quotes_token_ids: Option<(TokenId, TokenId)>,
+    /// The quotes we currently know about in the quote books
+    pub quote_books: HashMap<(TokenId, TokenId), Vec<d_api::Quote>>,
     /// A buffer of errors
     pub errors: VecDeque<String>,
 }
@@ -69,7 +80,7 @@ impl Worker {
         // Set up the gRPC connection to the mobilecoind client
         // Note: choice of 2 completion queues here is not very deliberate
         let grpc_env = Arc::new(grpcio::EnvBuilder::new().cq_count(2).build());
-        let ch = ChannelBuilder::default_channel_builder(grpc_env)
+        let ch = ChannelBuilder::default_channel_builder(grpc_env.clone())
             .connect_to_uri(&config.mobilecoind_uri);
 
         let mobilecoind_api_client = MobilecoindApiClient::new(ch);
@@ -87,24 +98,31 @@ impl Worker {
             std::thread::sleep(Duration::from_millis(1000));
         };
 
+        let deqs_client = config.deqs_uri.as_ref().map(|uri| {
+            let ch = ChannelBuilder::default_channel_builder(grpc_env)
+                .connect_to_uri(uri);
+
+            DeqsClient::new(ch)
+        });
+
         let state = Arc::new(Mutex::new(WorkerState {
-            synced_blocks: 0,
             total_blocks: 1,
-            balance: Default::default(),
-            errors: Default::default(),
+            ..Default::default()
         }));
 
         let stop_requested = Arc::new(AtomicBool::default());
         let thread_stop_requested = stop_requested.clone();
         let thread_monitor_id = monitor_id.clone();
-        let thread_client = mobilecoind_api_client.clone();
+        let thread_mcd_client = mobilecoind_api_client.clone();
+        let thread_deqs_client = deqs_client.clone();
         let thread_minimum_fees = minimum_fees.clone();
         let thread_state = state.clone();
 
         let join_handle = Some(std::thread::spawn(move || {
             Self::worker_thread_entrypoint(
                 thread_monitor_id,
-                thread_client,
+                thread_mcd_client,
+                thread_deqs_client,
                 thread_minimum_fees,
                 thread_state,
                 thread_stop_requested,
@@ -114,6 +132,7 @@ impl Worker {
         Ok(Arc::new(Worker {
             config,
             mobilecoind_api_client,
+            deqs_client,
             account_key,
             monitor_id,
             monitor_b58_address,
@@ -174,6 +193,26 @@ impl Worker {
         self.state.lock().unwrap().balance.clone()
     }
 
+    /// Check if the worker has a deqs connection
+    pub fn has_deqs(&self) -> bool {
+        self.deqs_client.is_some()
+    }
+
+    /// Ask the worker to get quotes for given token ids
+    pub fn get_quotes_for_token_ids(&self, tok1: TokenId, tok2: TokenId) {
+        self.state.lock().unwrap().get_quotes_token_ids = Some((tok1, tok2));
+    }
+
+    /// Tell the worker it can stop getting quotes
+    pub fn stop_quotes(&self) {
+        self.state.lock().unwrap().get_quotes_token_ids = None;    
+    }
+
+    /// Get the quote book for a given pair
+    pub fn get_quote_book(&self, tok1: TokenId, tok2: TokenId) -> Vec<d_api::Quote> {
+        self.state.lock().unwrap().quote_books.get(&(tok1, tok2)).cloned().unwrap_or(Default::default())
+    }
+
     /// Decode a b58 address
     pub fn decode_b58_address(b58_address: &str) -> Result<external::PublicAddress, String> {
         let printable_wrapper = PrintableWrapper::b58_decode(b58_address.to_owned())
@@ -207,11 +246,11 @@ impl Worker {
             }
         };
 
-        let mut outlay = api::Outlay::new();
+        let mut outlay = mcd_api::Outlay::new();
         outlay.value = value;
         outlay.set_receiver(receiver);
 
-        let mut req = api::SendPaymentRequest::new();
+        let mut req = mcd_api::SendPaymentRequest::new();
         req.set_sender_monitor_id(self.monitor_id.clone());
         req.set_outlay_list(vec![outlay].into());
         req.token_id = *token_id;
@@ -226,6 +265,16 @@ impl Worker {
                 st.errors.push_back(err.to_string());
             }
         }
+    }
+
+    /// Create and submit a swap offer
+    pub fn offer_swap(&self, from_amount: Amount, to_amount: Amount) {
+        unimplemented!();
+    }
+
+    /// Act as the counterparty to a given swap
+    pub fn perform_swap(&self, sci: SignedContingentInput, partial_fill_value: u64) {
+        unimplemented!();
     }
 
     /// Get the error at the front of the error queue, if any.
@@ -257,7 +306,7 @@ impl Worker {
     > {
         // Create a monitor using our account key
         let monitor_id = {
-            let mut req = api::AddMonitorRequest::new();
+            let mut req = mcd_api::AddMonitorRequest::new();
             req.set_account_key(account_key.into());
             req.set_num_subaddresses(2);
             req.set_name("mobilecoind-buddy".to_string());
@@ -271,7 +320,7 @@ impl Worker {
 
         // Get the b58 public address for monitor
         let monitor_b58_address = {
-            let mut req = api::GetPublicAddressRequest::new();
+            let mut req = mcd_api::GetPublicAddressRequest::new();
             req.set_monitor_id(monitor_id.clone());
 
             let resp = mobilecoind_api_client
@@ -312,6 +361,7 @@ impl Worker {
     fn worker_thread_entrypoint(
         monitor_id: Vec<u8>,
         mobilecoind_api_client: MobilecoindApiClient,
+        deqs_client: Option<DeqsClient>,
         minimum_fees: HashMap<TokenId, u64>,
         state: Arc<Mutex<WorkerState>>,
         stop_requested: Arc<AtomicBool>,
@@ -329,8 +379,8 @@ impl Worker {
                 event!(Level::ERROR, "polling mobilecoind: {}", err);
                 {
                     let mut st = state.lock().unwrap();
+                    // TODO: Maybe pop an error if there are many errors?
                     if st.errors.len() < 3 {
-                        // TODO: Maybe pop an error instead?
                         st.errors.push_back(err.to_string());
                     }
                 }
@@ -339,8 +389,26 @@ impl Worker {
                 continue;
             }
 
-            // Back off for 100 ms
-            std::thread::sleep(Duration::from_millis(100));
+            if let Some(deqs_client) = deqs_client.as_ref() {            
+                if let Err(err) =
+                    Self::poll_deqs(deqs_client, &state)
+                {
+                    event!(Level::ERROR, "polling deqs: {}", err);
+                    {
+                        let mut st = state.lock().unwrap();
+                        // TODO: Maybe pop an error if there are many errors?
+                        if st.errors.len() < 3 {
+                            st.errors.push_back(err.to_string());
+                        }
+                    }
+                    // Back off for 500 ms when there is an error
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+            }
+
+            // Back off for 20 ms
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -350,6 +418,7 @@ impl Worker {
         minimum_fees: &HashMap<TokenId, u64>,
         state: &Arc<Mutex<WorkerState>>,
     ) -> Result<(), grpcio::Error> {
+        span!(Level::TRACE, "poll mobilecoind");
         // Check ledger status
         {
             event!(Level::TRACE, "worker: check ledger status");
@@ -361,7 +430,7 @@ impl Worker {
         // Check monitor status
         {
             event!(Level::TRACE, "worker: check monitor status");
-            let mut req = api::GetMonitorStatusRequest::new();
+            let mut req = mcd_api::GetMonitorStatusRequest::new();
             req.set_monitor_id(monitor_id.clone());
             let resp = client.get_monitor_status(&req)?;
 
@@ -374,13 +443,46 @@ impl Worker {
             for token_id in minimum_fees.keys() {
                 event!(Level::TRACE, "worker: check balance: {}", *token_id);
                 // FIXME: We should also check some other subaddresses most likely
-                let mut req = api::GetBalanceRequest::new();
+                let mut req = mcd_api::GetBalanceRequest::new();
                 req.set_monitor_id(monitor_id.clone());
                 req.set_token_id(**token_id);
                 let resp = client.get_balance(&req)?;
 
                 let mut st = state.lock().unwrap();
                 *st.balance.entry(*token_id).or_default() = resp.balance;
+            }
+        }
+        Ok(())
+    }
+
+    fn poll_deqs(
+        client: &DeqsClient,
+        state: &Arc<Mutex<WorkerState>>,
+    ) -> Result<(), grpcio::Error> {
+        let maybe_tokens = {
+            state.lock().unwrap().get_quotes_token_ids.clone()
+        };
+        // Only do the poll if the ui thread told us we're looking at two particular tokens,
+        // and then only if they are different tokens.
+        if let Some((token1, token2)) = maybe_tokens {
+            if token1 == token2 { return Ok(()); }
+            span!(Level::TRACE, "poll deqs");
+
+            for (base_token_id, counter_token_id) in vec![(token1, token2), (token2, token1)].into_iter() {
+                let mut pair = d_api::Pair::new();
+                pair.set_base_token_id(*base_token_id);
+                pair.set_counter_token_id(*counter_token_id);
+
+                let mut req = d_api::GetQuotesRequest::new();
+                req.set_pair(pair);
+                req.set_limit(QUOTES_LIMIT);
+
+                event!(Level::TRACE, "getting quotes for pair {} / {}", *base_token_id, *counter_token_id);
+                let mut resp = client.get_quotes(&req)?;
+                {
+                    let mut st = state.lock().unwrap();
+                    *st.quote_books.entry((base_token_id, counter_token_id)).or_default() = resp.take_quotes().to_vec();
+                }
             }
         }
         Ok(())

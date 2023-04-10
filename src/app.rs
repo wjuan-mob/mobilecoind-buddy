@@ -1,9 +1,9 @@
-use crate::{Config, TokenId, TokenInfo, Worker};
-use egui::{Align, Button, CentralPanel, Color32, Grid, Layout, RichText, TopBottomPanel};
-use rust_decimal::{prelude::*, Decimal};
+use crate::{Config, TokenId, TokenInfo, Worker, Amount};
+use egui::{Align, Button, CentralPanel, Color32, ComboBox, Grid, Layout, RichText, ScrollArea, TopBottomPanel};
+use mc_transaction_extra::SignedContingentInput;
+use rust_decimal::{Decimal};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +14,7 @@ enum Mode {
     Assets,
     Send,
     Swap,
+    OfferSwap,
 }
 
 /// The App implements eframe::App and is called frequently to redraw the state,
@@ -31,11 +32,14 @@ pub struct App {
     send_to: String,
     /// Which token we most recently selected to swap from
     swap_from_token_id: TokenId,
+    /// Which token value we most recently selected to swap from (per swap_from_token_id)
+    swap_from_value: HashMap<TokenId, String>,
     /// Which token we most recently selected to swap to
     swap_to_token_id: TokenId,
-    /// Which token value which most recently selected to swap for (per swap_to_token_id)
+    /// Which token value we most recently selected to swap for (per swap_to_token_id)
     swap_to_value: HashMap<TokenId, String>,
-    /// The worker is doing balance checking with mobilecoind in the background
+    /// The worker is doing balance checking with mobilecoind in the background,
+    /// and fetching a quotebook from deqs if available.
     #[serde(skip)]
     worker: Option<Arc<Worker>>,
 }
@@ -49,6 +53,7 @@ impl Default for App {
             send_value: Default::default(),
             send_to: Default::default(),
             swap_from_token_id: TokenId::from(0),
+            swap_from_value: Default::default(),
             swap_to_token_id: TokenId::from(1),
             swap_to_value: Default::default(),
             worker: None,
@@ -72,6 +77,50 @@ impl App {
 
         result.worker = Some(worker);
         result
+    }
+
+    /// Helper which renders a drop-down menu for selecting a token-id, followed by a text edit line for a value.
+    ///
+    /// Arguments:
+    /// * ui which we are rendering into
+    /// * context string, which generates egui ids. Should be unique.
+    /// * token_infos, obtained from worker.get_token_infos
+    /// * token_id, mutable reference to state this widget is selecting
+    /// * values, mutable reference to the value strings this widget is selecting. These are scaled by the user.
+    fn amount_selector(ui: &mut egui::Ui, context: &str, token_infos: &[TokenInfo], token_id: &mut TokenId, values: &mut HashMap<TokenId, String>) {
+                    let current_token_info: Option<&TokenInfo> = token_infos
+                        .iter()
+                        .find(|info| info.token_id == *token_id);
+
+                    ui.horizontal(|ui| {
+                        ui.label(context);
+                        ComboBox::from_id_source(context)
+                            .selected_text(
+                                current_token_info
+                                    .map(|info| info.symbol.clone())
+                                    .unwrap_or_default(),
+                            )
+                            .show_ui(ui, |ui| {
+                                for info in token_infos.iter() {
+                                    ui.selectable_value(
+                                        token_id,
+                                        info.token_id,
+                                        info.symbol.clone(),
+                                    );
+                                }
+                            });
+
+                        let scaled_value_str = values
+                            .entry(*token_id)
+                            .or_insert_with(|| "0".to_string());
+                        ui.text_edit_singleline(scaled_value_str);
+                    });
+    
+    }
+
+    // Helper which performs quote selection from a quote book
+    fn quote_selection(quote_book: &[deqs_api::deqs::Quote], from_u64_value: u64, to_u64_value: u64) -> Result<(SignedContingentInput, u64), String> {
+        unimplemented!();
     }
 }
 
@@ -138,20 +187,29 @@ impl eframe::App for App {
 
         // The bottom panel is always shown, it allows the user to switch modes.
         TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.columns(3, |columns| {
+            ui.columns(4, |columns| {
                 columns[0].vertical_centered(|ui| {
                     if ui.button("Assets").clicked() {
                         self.mode = Mode::Assets;
+                        worker.stop_quotes();
                     }
                 });
                 columns[1].vertical_centered(|ui| {
                     if ui.button("Send").clicked() {
                         self.mode = Mode::Send;
+                        worker.stop_quotes();
                     }
                 });
                 columns[2].vertical_centered(|ui| {
                     if ui.button("Swap").clicked() {
                         self.mode = Mode::Swap;
+                        worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
+                    }
+                });
+                columns[3].vertical_centered(|ui| {
+                    if ui.button("Offer Swap").clicked() {
+                        self.mode = Mode::OfferSwap;
+                        worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
                     }
                 });
             });
@@ -186,33 +244,11 @@ impl eframe::App for App {
                         ui.text_edit_singleline(&mut self.send_to);
                     });
 
+                    Self::amount_selector(ui, "Amount", &token_infos, &mut self.send_token_id, &mut self.send_value);
+
                     let current_token_info: Option<&TokenInfo> = token_infos
                         .iter()
                         .find(|info| info.token_id == self.send_token_id);
-
-                    ui.horizontal(|ui| {
-                        egui::ComboBox::from_id_source("Token")
-                            .selected_text(
-                                current_token_info
-                                    .map(|info| info.symbol.clone())
-                                    .unwrap_or_default(),
-                            )
-                            .show_ui(ui, |ui| {
-                                for info in token_infos.iter() {
-                                    ui.selectable_value(
-                                        &mut self.send_token_id,
-                                        info.token_id,
-                                        info.symbol.clone(),
-                                    );
-                                }
-                            });
-
-                        let scaled_value_str = self
-                            .send_value
-                            .entry(self.send_token_id)
-                            .or_insert_with(|| "0".to_string());
-                        ui.text_edit_singleline(scaled_value_str);
-                    });
 
                     let scaled_value_str = self
                         .send_value
@@ -244,25 +280,16 @@ impl eframe::App for App {
 
                     // This either the u64 value of the token to send, or a string error to display
                     let okay_to_submit: Result<u64, String> = current_token_info
-                        .ok_or("must select a token".to_string())
+                        .ok_or("select a token".to_string())
                         .and_then(|info: &TokenInfo| -> Result<u64, String> {
-                            let parsed_value = Decimal::from_str(scaled_value_str)
-                                .map_err(|err| err.to_string())?;
-                            let scale = Decimal::new(1, info.decimals);
-                            let rescaled_value = parsed_value
-                                .checked_div(scale)
-                                .ok_or("decimal overflow".to_string())?;
-                            let u64_value = rescaled_value
-                                .round()
-                                .to_u64()
-                                .ok_or("u64 overflow".to_string())?;
+                            let u64_value = info.try_scaled_to_u64(scaled_value_str)?;
 
                             let u64_value_with_fee = u64_value
                                 .checked_add(info.fee)
                                 .ok_or("u64 overflow with fee".to_string())?;
                             if u64_value_with_fee > *balances.entry(self.send_token_id).or_default()
                             {
-                                return Err("balance exceeded".to_string());
+                                return Err("insufficient funds".to_string());
                             }
 
                             // Check the send_to field
@@ -286,6 +313,132 @@ impl eframe::App for App {
                 }
                 Mode::Swap => {
                     ui.heading("Swap");
+
+                    if !worker.has_deqs() {
+                        ui.label("No deqs uri was configured, swap is not available.");
+                        return;
+                    }
+
+                    Self::amount_selector(ui, "Swap from", &token_infos, &mut self.swap_from_token_id, &mut self.swap_from_value);
+                    ui.label("↓");
+                    Self::amount_selector(ui, "Swap to", &token_infos, &mut self.swap_to_token_id, &mut self.swap_to_value);
+
+                    worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
+
+                    let quote_book = worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id);
+
+                    let swap_from_token_info: Option<&TokenInfo> = token_infos
+                        .iter()
+                        .find(|info| info.token_id == self.swap_from_token_id);
+
+                    let swap_to_token_info: Option<&TokenInfo> = token_infos
+                        .iter()
+                        .find(|info| info.token_id == self.swap_to_token_id);
+
+                    // Returns an SCI we selected to swap against, and the partial fill value to fill it to, or an error message
+                    let okay_to_submit: Result<(SignedContingentInput, u64), String> = swap_from_token_info.zip(swap_to_token_info)
+                        .ok_or("".to_string())
+                        .and_then(|(from_info, to_info)| -> Result<(SignedContingentInput, u64), String> {
+                            if self.swap_from_token_id == self.swap_to_token_id {
+                                return Err("".to_string());
+                            }
+
+                            let from_u64_value = from_info.try_scaled_to_u64(self.swap_from_value.entry(self.swap_from_token_id).or_insert_with(|| "0".to_string()))?;
+                            let to_u64_value = to_info.try_scaled_to_u64(self.swap_to_value.entry(self.swap_to_token_id).or_insert_with(|| "0".to_string()))?;
+
+                            Self::quote_selection(&quote_book, from_u64_value, to_u64_value)
+                        });
+
+                    match okay_to_submit {
+                        Ok((sci, partial_fill_value)) => {
+                            ui.label("");
+                            if ui.button("Submit").clicked() {
+                                worker.perform_swap(sci, partial_fill_value);
+                            }
+                        }
+                        Err(err_str) => {
+                            ui.label(err_str);
+                            ui.add_enabled(false, Button::new("Submit"));
+                        }
+                    }
+                }
+                Mode::OfferSwap => {
+                    ui.heading("Offer Swap");
+
+                    if !worker.has_deqs() {
+                        ui.label("No deqs uri was configured, swap is not available.");
+                        return;
+                    }
+
+                    Self::amount_selector(ui, "Swap from", &token_infos, &mut self.swap_from_token_id, &mut self.swap_from_value);
+                    ui.label("↓");
+                    Self::amount_selector(ui, "Swap to", &token_infos, &mut self.swap_to_token_id, &mut self.swap_to_value);
+
+                    worker.get_quotes_for_token_ids(self.swap_to_token_id, self.swap_from_token_id);
+
+                    let swap_from_token_info: Option<&TokenInfo> = token_infos
+                        .iter()
+                        .find(|info| info.token_id == self.swap_from_token_id);
+
+                    let swap_to_token_info: Option<&TokenInfo> = token_infos
+                        .iter()
+                        .find(|info| info.token_id == self.swap_to_token_id);
+
+                    let okay_to_submit: Result<(Amount, Amount), String> = swap_from_token_info.zip(swap_to_token_info)
+                        .ok_or("".to_string())
+                        .and_then(|(from_info, to_info)| -> Result<(Amount, Amount), String> {
+                            if self.swap_from_token_id == self.swap_to_token_id {
+                                return Err("".to_string());
+                            }
+
+                            let from_u64_value = from_info.try_scaled_to_u64(self.swap_from_value.entry(self.swap_from_token_id).or_insert_with(|| "0".to_string()))?;
+                            let to_u64_value = to_info.try_scaled_to_u64(self.swap_to_value.entry(self.swap_to_token_id).or_insert_with(|| "0".to_string()))?;
+
+                            if *balances.entry(self.swap_from_token_id).or_default() < from_u64_value {
+                                return Err("insufficient funds".to_string());
+                            }
+                            Ok((Amount::new(from_u64_value, self.swap_from_token_id), Amount::new(to_u64_value, self.swap_to_token_id)))
+                        });
+
+                    match okay_to_submit {
+                        Ok((from_amount, to_amount)) => {
+                            ui.label("");
+                            if ui.button("Submit").clicked() {
+                                worker.offer_swap(from_amount, to_amount);
+                            }
+                        }
+                        Err(err_str) => {
+                            ui.label(err_str);
+                            ui.add_enabled(false, Button::new("Submit"));
+                        }
+                    }
+
+                    let books = [worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id), worker.get_quote_book(self.swap_from_token_id, self.swap_to_token_id)];
+                    let headings = ["Bid", "Ask"];
+
+                    ui.separator();
+                    ui.columns(2, |columns| {
+                        for idx in 0..2 {
+                            let ui = &mut columns[idx];
+
+                            ui.heading(headings[idx]);
+
+                            ScrollArea::vertical().show(ui, |ui| {
+                                Grid::new(format!("{}_table", headings[idx])).show(ui, |ui| {
+                                    ui.label("Price");
+                                    ui.label("Volume");
+                                    ui.end_row();
+
+                                    for quote in books[idx].clone() {
+                                        ui.label("xxx");
+                                        ui.label("yyy");
+                                        ui.end_row();
+                                    }
+                                });
+                            });
+                            
+                        }
+                    });
                 }
             }
         });

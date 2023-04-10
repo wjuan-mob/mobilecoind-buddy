@@ -2484,6 +2484,7 @@ dependencies = [
  "mc-account-keys",
  "mc-api",
  "mc-mobilecoind-api",
+ "mc-transaction-extra",
  "mc-transaction-types",
  "mc-util-keyfile",
  "mc-util-uri",

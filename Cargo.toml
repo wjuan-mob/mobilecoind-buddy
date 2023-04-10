@@ -25,6 +25,7 @@ tracing-subscriber = "0.3"
 mc-account-keys = { path = "deqs/mobilecoin/account-keys" }
 mc-api = { path = "deqs/mobilecoin/api" }
 mc-mobilecoind-api = { path = "deqs/mobilecoin/mobilecoind/api" }
+mc-transaction-extra = { path = "deqs/mobilecoin/transaction/extra" }
 mc-transaction-types = { path = "deqs/mobilecoin/transaction/types" }
 mc-util-keyfile = { path = "deqs/mobilecoin/util/keyfile" }
 mc-util-uri = { path = "deqs/mobilecoin/util/uri" }
