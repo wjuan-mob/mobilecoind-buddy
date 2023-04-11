@@ -101,7 +101,7 @@ impl App {
     /// * context string, which generates egui ids. Should be unique.
     /// * token_infos, obtained from worker.get_token_infos
     /// * token_id, mutable reference to state this widget is selecting
-    /// * values, mutable reference to the value strings this widget is selecting. These are scaled by the user.
+    /// * values, mutable reference to the value strings this widget is selecting. These are parsed as scaled decimal values.
     fn amount_selector(
         ui: &mut egui::Ui,
         context: &str,
@@ -377,7 +377,6 @@ impl eframe::App for App {
                                 return Err("".to_string());
                             }
 
-                            //let from_u64_value = from_info.try_scaled_to_u64(self.swap_from_value.entry(self.swap_from_token_id).or_insert_with(|| "0".to_string()))?;
                             let to_u64_value = to_info.try_scaled_to_u64(
                                 self.swap_to_value
                                     .entry(self.swap_to_token_id)
@@ -385,12 +384,20 @@ impl eframe::App for App {
                             )?;
 
                             let to_amount = Amount::new(to_u64_value, self.swap_to_token_id);
-                            QuoteSelection::new(
+                            let qs = QuoteSelection::new(
                                 &quote_book,
                                 self.swap_from_token_id,
                                 from_info,
                                 to_amount,
-                            )
+                            )?;
+
+                            // Check if we have sufficient funds to do this
+                            let from_token_balance = balances.get(&self.swap_from_token_id).cloned().unwrap_or(0);
+                            let from_token_fee = from_info.fee;
+                            if from_token_balance < qs.from_u64_value + from_token_fee {
+                                return Err("insufficient funds".to_string());
+                            }
+                            Ok(qs)
                         });
 
                     match okay_to_submit {
