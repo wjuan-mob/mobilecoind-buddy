@@ -24,3 +24,9 @@ Then, you can use a command like `cargo run --release -- --keyfile=example/accou
 You can optionally specify `--deqs-uri` flag if you want to connect to a DEQS deployment, enabling swaps.
 
 For testnet, you can use `--deqs-uri=insecure-deqs://deqs.chrisbeck.co`.
+
+Or, build and run the deqs locally, against locally running `mobilecoind`.
+
+```
+cargo run -p deqs-server -- --db-path /tmp/deqs-db --ledger-db /tmp/testnet/ledger-db --client-listen-uri insecure-deqs://localhost
+```
