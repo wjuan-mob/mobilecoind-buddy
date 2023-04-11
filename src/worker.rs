@@ -319,9 +319,36 @@ impl Worker {
             }
         };
 
+        let proto_sci = response.take_sci();
+
+        let sci = match SignedContingentInput::try_from(&proto_sci) {
+            Ok(sci) => sci,
+            Err(err) => {
+                event!(
+                    Level::ERROR,
+                    "mobilecoind generated a malformed sci: {}",
+                    err
+                );
+                let mut st = self.state.lock().unwrap();
+                st.errors.push_back(err.to_string());
+                return;
+            }
+        };
+
+        if let Err(err) = sci.validate() {
+            event!(
+                Level::ERROR,
+                "mobilecoind generated an invalid sci: {}",
+                err
+            );
+            let mut st = self.state.lock().unwrap();
+            st.errors.push_back(err.to_string());
+            return;
+        };
+
         // Submit the generated sci to the deqs
         let mut request = d_api::SubmitQuotesRequest::new();
-        request.set_quotes(vec![response.take_sci()].into());
+        request.set_quotes(vec![proto_sci].into());
         let response = match self.deqs_client.as_ref().unwrap().submit_quotes(&request) {
             Ok(resp) => resp,
             Err(err) => {
@@ -438,7 +465,9 @@ impl Worker {
                 }
             }
             // Extra sleep, try to give the sync thread time to find the utxo
-            std::thread::sleep(Duration::from_millis(100));
+            // FIXME: Should we block on a different call than get_tx_status?
+            // Or maybe keep track of the expected utxo and retry on get_unspent_utxos until we find it?
+            std::thread::sleep(Duration::from_millis(1000));
         }
     }
 
