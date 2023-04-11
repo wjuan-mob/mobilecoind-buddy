@@ -358,12 +358,31 @@ impl Worker {
                 return;
             }
         };
-        // Handle any error messages
-        if response.error_messages.len() == 0 {
+        // Handle any error statuses and error messages
+        if response.status_codes.len() > 1 {
+            event!(
+                Level::WARN,
+                "unexpectedly got {} status codes back",
+                response.status_codes.len()
+            );
+        }
+        let status_code = response.status_codes.get(0);
+        if status_code == Some(&d_api::QuoteStatusCode::CREATED) {
             event!(Level::INFO, "submitted swap offer successfully");
         } else {
-            let err_msg = response.error_messages[0].clone();
-            event!(Level::ERROR, "deqs error: {}", err_msg);
+            let err_msg = response
+                .error_messages
+                .get(0)
+                .cloned()
+                .unwrap_or("no error message...".to_owned());
+            event!(
+                Level::ERROR,
+                "deqs error: {:?}: {}",
+                status_code
+                    .map(|c| format!("{:?}", c))
+                    .unwrap_or("no status".to_owned()),
+                err_msg
+            );
             let mut st = self.state.lock().unwrap();
             st.errors.push_back(err_msg);
         }
