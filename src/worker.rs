@@ -491,12 +491,45 @@ impl Worker {
     }
 
     /// Act as the counterparty to a given swap
+    ///
+    /// Arguments:
+    /// sci - sci to fulfill
+    /// partial_fill_value - degree to fill it to
+    /// from_token_id - the token id we need to pay in order to fulfill the sci
+    /// fee_token_id - the token id to pay the fee in
     pub fn perform_swap(
         &self,
         sci: SignedContingentInput,
         partial_fill_value: u64,
+        from_token_id: TokenId,
         fee_token_id: TokenId,
     ) {
+        // First we have to get utxo list from mobilecoind
+        let mut retries = 3;
+        let mut response = loop {
+            let mut request = mcd_api::GetUnspentTxOutListRequest::new();
+            request.set_monitor_id(self.monitor_id.clone());
+            request.set_subaddress_index(0);
+            request.set_token_id(*from_token_id);
+            match self
+                .mobilecoind_api_client
+                .get_unspent_tx_out_list(&request)
+            {
+                Ok(resp) => break resp,
+                Err(err) => {
+                    let err_msg = format!("failed getting unspent tx out list: {err}");
+                    event!(Level::ERROR, err_msg);
+                    retries -= 1;
+                    if retries == 0 {
+                        let mut st = self.state.lock().unwrap();
+                        st.errors.push_back(err_msg);
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            };
+        };
+
         let mut sci_for_tx = mcd_api::SciForTx::new();
         sci_for_tx.set_sci((&sci).into());
         sci_for_tx.set_partial_fill_value(partial_fill_value);
@@ -504,10 +537,27 @@ impl Worker {
         let mut req = mcd_api::GenerateMixedTxRequest::new();
         req.set_sender_monitor_id(self.monitor_id.clone());
         req.set_change_subaddress(0);
+        req.set_input_list(response.take_output_list());
         req.set_scis(vec![sci_for_tx].into());
         req.set_fee_token_id(*fee_token_id);
 
-        match self.mobilecoind_api_client.generate_mixed_tx(&req) {
+        let mut resp = match self.mobilecoind_api_client.generate_mixed_tx(&req) {
+            Ok(resp) => {
+                event!(Level::DEBUG, "generated swap tx successfully");
+                resp
+            }
+            Err(err) => {
+                event!(Level::ERROR, "failed to generate swap tx: {}", err);
+                let mut st = self.state.lock().unwrap();
+                st.errors.push_back(err.to_string());
+                return;
+            }
+        };
+
+        let mut req = mcd_api::SubmitTxRequest::new();
+        req.set_tx_proposal(resp.take_tx_proposal());
+
+        match self.mobilecoind_api_client.submit_tx(&req) {
             Ok(_resp) => {
                 event!(Level::INFO, "submitted swap tx successfully");
             }
@@ -515,8 +565,9 @@ impl Worker {
                 event!(Level::ERROR, "failed to submit swap tx: {}", err);
                 let mut st = self.state.lock().unwrap();
                 st.errors.push_back(err.to_string());
+                return;
             }
-        }
+        };
     }
 
     /// Get the error at the front of the error queue, if any.

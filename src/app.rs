@@ -392,7 +392,8 @@ impl eframe::App for App {
                             )?;
 
                             // Check if we have sufficient funds to do this
-                            let from_token_balance = balances.get(&self.swap_from_token_id).cloned().unwrap_or(0);
+                            let from_token_balance =
+                                balances.get(&self.swap_from_token_id).cloned().unwrap_or(0);
                             let from_token_fee = from_info.fee;
                             if from_token_balance < qs.from_u64_value + from_token_fee {
                                 return Err("insufficient funds".to_string());
@@ -409,10 +410,12 @@ impl eframe::App for App {
                             ui.label("");
                             if ui.button("Submit").clicked() {
                                 // We pay the fee in the from_token_id
+                                let fee_token_id = self.swap_from_token_id;
                                 worker.perform_swap(
                                     qs.sci,
                                     qs.partial_fill_value,
                                     self.swap_from_token_id,
+                                    fee_token_id,
                                 );
                             }
                         }
