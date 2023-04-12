@@ -583,7 +583,7 @@ impl eframe::App for App {
                                         counter_token_info.symbol
                                     ))
                                 } else {
-                                    Err(format!("Insufficient {}", counter_token_info.symbol))
+                                    Err(format!("Insufficient {}", base_token_info.symbol))
                                 }
                             })
                         });
@@ -597,6 +597,7 @@ impl eframe::App for App {
                         if ui
                             .add_enabled(buy_is_possible.is_ok(), Button::new("Buy"))
                             .on_hover_text(buy_hint_text)
+                            .on_disabled_hover_text(buy_hint_text)
                             .clicked()
                         {
                             let from_amount = Amount::new(
@@ -610,6 +611,7 @@ impl eframe::App for App {
                         if ui
                             .add_enabled(sell_is_possible.is_ok(), Button::new("Sell"))
                             .on_hover_text(sell_hint_text)
+                            .on_disabled_hover_text(sell_hint_text)
                             .clicked()
                         {
                             let from_amount =
