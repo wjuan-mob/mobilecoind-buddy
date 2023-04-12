@@ -385,6 +385,11 @@ impl eframe::App for App {
                             )?;
 
                             let to_amount = Amount::new(to_u64_value, self.swap_to_token_id);
+
+                            // TODO: If the user is modifying the swap_from_value field, it would be nice to do
+                            // quote selection based on that, and update the swap_to_value field. Uniswap works this way.
+                            // At this revision we only pay attention to the swap_to_value field, and always update swap_from_value
+                            // based on that.
                             let qs = QuoteSelection::new(
                                 &quote_book,
                                 self.swap_from_token_id,
@@ -523,28 +528,75 @@ impl eframe::App for App {
                     let counter_u64_value = counter_volume
                         .and_then(|counter_vol| counter_token_info.try_decimal_to_u64(counter_vol));
 
-                    // True if we have enough to conduct a buy
-                    let sufficient_counter_balance = counter_u64_value
-                        .clone()
-                        .map(|u64_value| {
-                            *balances.entry(self.counter_token_id).or_default() >= u64_value
-                        })
-                        .unwrap_or(false);
-                    let buy_is_possible = sufficient_counter_balance && base_u64_value.is_ok();
+                    // Computes the hint text for the buy button. The result is Ok if we can buy,
+                    // and Err if we cannot buy for some reason.
+                    let buy_is_possible: Result<String, String> =
+                        counter_u64_value.clone().and_then(|counter_u64_value| {
+                            base_u64_value.clone().and_then(|base_u64_value| {
+                                if *balances.entry(self.counter_token_id).or_default()
+                                    >= counter_u64_value
+                                {
+                                    // FIXME: check for i64 overflow
+                                    Ok(format!(
+                                        "Offer to trade {} {}\n for {} {}",
+                                        Decimal::new(
+                                            counter_u64_value as i64,
+                                            counter_token_info.decimals
+                                        ),
+                                        counter_token_info.symbol,
+                                        Decimal::new(
+                                            base_u64_value as i64,
+                                            base_token_info.decimals
+                                        ),
+                                        base_token_info.symbol
+                                    ))
+                                } else {
+                                    Err(format!("Insufficient {}", counter_token_info.symbol))
+                                }
+                            })
+                        });
+                    let buy_hint_text = match buy_is_possible.as_ref() {
+                        Ok(text) => text,
+                        Err(text) => text,
+                    };
 
-                    // True if we have enough to conduct a sell
-                    let sufficient_base_balance = base_u64_value
-                        .clone()
-                        .map(|u64_value| {
-                            *balances.entry(self.base_token_id).or_default() >= u64_value
-                        })
-                        .unwrap_or(false);
-                    let sell_is_possible = sufficient_base_balance && counter_u64_value.is_ok();
+                    // Computes the hint text for the sell button. The result is Ok if we can sell,
+                    // and Err if we cannot sell for some reason.
+                    let sell_is_possible: Result<String, String> =
+                        base_u64_value.clone().and_then(|base_u64_value| {
+                            counter_u64_value.clone().and_then(|counter_u64_value| {
+                                if *balances.entry(self.base_token_id).or_default()
+                                    >= base_u64_value
+                                {
+                                    // FIXME: check for i64 overflow
+                                    Ok(format!(
+                                        "Offer to trade {} {}\n for {} {}",
+                                        Decimal::new(
+                                            base_u64_value as i64,
+                                            base_token_info.decimals
+                                        ),
+                                        base_token_info.symbol,
+                                        Decimal::new(
+                                            counter_u64_value as i64,
+                                            counter_token_info.decimals
+                                        ),
+                                        counter_token_info.symbol
+                                    ))
+                                } else {
+                                    Err(format!("Insufficient {}", counter_token_info.symbol))
+                                }
+                            })
+                        });
+                    let sell_hint_text = match sell_is_possible.as_ref() {
+                        Ok(text) => text,
+                        Err(text) => text,
+                    };
 
                     // Add buy and sell buttons
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(buy_is_possible, Button::new("Buy"))
+                            .add_enabled(buy_is_possible.is_ok(), Button::new("Buy"))
+                            .on_hover_text(buy_hint_text)
                             .clicked()
                         {
                             let from_amount = Amount::new(
@@ -556,7 +608,8 @@ impl eframe::App for App {
                             worker.offer_swap(from_amount, to_amount);
                         }
                         if ui
-                            .add_enabled(sell_is_possible, Button::new("Sell"))
+                            .add_enabled(sell_is_possible.is_ok(), Button::new("Sell"))
+                            .on_hover_text(sell_hint_text)
                             .clicked()
                         {
                             let from_amount =

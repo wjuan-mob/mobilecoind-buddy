@@ -260,6 +260,9 @@ impl QuoteSelection {
     /// These should all be quotes from the right book type, or warnings will be logged.
     ///
     /// If there is no appropriate quote, returns "insufficient liquidity".
+    ///
+    /// TODO: We should probably allow to incorporate several quotes, like two or three,
+    /// if that would give a better execution, since mobilecoind supports that.
     pub fn new(
         quote_book: &[ValidatedQuote],
         from_token_id: TokenId,
