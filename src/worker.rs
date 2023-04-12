@@ -74,7 +74,20 @@ impl Drop for Worker {
     }
 }
 
+// Data returned when we try to connect to mobilecoind and set up a monitor
+struct MobilecoindSetupData {
+    // The monitor id of the monitor we created for this account
+    pub monitor_id: Vec<u8>,
+    // The public address of this account
+    pub monitor_public_address: external::PublicAddress,
+    // The b58 address of this account
+    pub monitor_b58_address: String,
+    // The minimum fees of the network
+    pub minimum_fees: HashMap<TokenId, u64>,
+}
+
 impl Worker {
+    /// Initialize a new worker from config
     pub fn new(config: Config) -> Result<Arc<Self>, WorkerInitError> {
         // Search for keyfile and load it
         let account_key = read_keyfile(config.keyfile.clone()).expect("Could not load keyfile");
@@ -88,7 +101,12 @@ impl Worker {
         let mobilecoind_api_client = MobilecoindApiClient::new(ch);
 
         let mut retries = 10;
-        let (monitor_id, monitor_public_address, monitor_b58_address, minimum_fees) = loop {
+        let MobilecoindSetupData {
+            monitor_id,
+            monitor_public_address,
+            monitor_b58_address,
+            minimum_fees,
+        } = loop {
             match Self::try_new_mobilecoind(&mobilecoind_api_client, &account_key) {
                 Ok(result) => break result,
                 Err(err) => event!(Level::ERROR, "Initialization failed, will retry: {}", err),
@@ -288,7 +306,7 @@ impl Worker {
                     err
                 );
                 let mut st = self.state.lock().unwrap();
-                st.errors.push_back(err.to_string());
+                st.errors.push_back(err);
                 return;
             }
         };
@@ -565,7 +583,6 @@ impl Worker {
                 event!(Level::ERROR, "failed to submit swap tx: {}", err);
                 let mut st = self.state.lock().unwrap();
                 st.errors.push_back(err.to_string());
-                return;
             }
         };
     }
@@ -588,15 +605,7 @@ impl Worker {
     fn try_new_mobilecoind(
         mobilecoind_api_client: &MobilecoindApiClient,
         account_key: &AccountKey,
-    ) -> Result<
-        (
-            Vec<u8>,
-            mc_api::external::PublicAddress,
-            String,
-            HashMap<TokenId, u64>,
-        ),
-        String,
-    > {
+    ) -> Result<MobilecoindSetupData, String> {
         // Create a monitor using our account key
         let monitor_id = {
             let mut req = mcd_api::AddMonitorRequest::new();
@@ -643,12 +652,12 @@ impl Worker {
             result
         };
 
-        Ok((
+        Ok(MobilecoindSetupData {
             monitor_id,
-            monitor_public_address.clone(),
+            monitor_public_address: monitor_public_address.clone(),
             monitor_b58_address,
             minimum_fees,
-        ))
+        })
     }
 
     fn worker_thread_entrypoint(
@@ -704,7 +713,7 @@ impl Worker {
     }
 
     fn poll_mobilecoind(
-        monitor_id: &Vec<u8>,
+        monitor_id: &[u8],
         client: &MobilecoindApiClient,
         minimum_fees: &HashMap<TokenId, u64>,
         state: &Arc<Mutex<WorkerState>>,
@@ -722,7 +731,7 @@ impl Worker {
         {
             event!(Level::TRACE, "worker: check monitor status");
             let mut req = mcd_api::GetMonitorStatusRequest::new();
-            req.set_monitor_id(monitor_id.clone());
+            req.set_monitor_id(monitor_id.to_owned());
             let resp = client.get_monitor_status(&req)?;
 
             let mut st = state.lock().unwrap();
@@ -735,7 +744,7 @@ impl Worker {
                 event!(Level::TRACE, "worker: check balance: {}", *token_id);
                 // FIXME: We should also check some other subaddresses most likely
                 let mut req = mcd_api::GetBalanceRequest::new();
-                req.set_monitor_id(monitor_id.clone());
+                req.set_monitor_id(monitor_id.to_owned());
                 req.set_token_id(**token_id);
                 let resp = client.get_balance(&req)?;
 
@@ -750,7 +759,7 @@ impl Worker {
         client: &DeqsClient,
         state: &Arc<Mutex<WorkerState>>,
     ) -> Result<(), grpcio::Error> {
-        let maybe_tokens = { state.lock().unwrap().get_quotes_token_ids.clone() };
+        let maybe_tokens = { state.lock().unwrap().get_quotes_token_ids };
         // Only do the poll if the ui thread told us we're looking at two particular tokens,
         // and then only if they are different tokens.
         if let Some((token1, token2)) = maybe_tokens {

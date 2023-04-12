@@ -283,12 +283,12 @@ impl eframe::App for App {
                                 Decimal::from(*balances.entry(self.send_token_id).or_default())
                                     .checked_mul(scale)
                             {
-                                ui.label(format!("balance: {}", balance.to_string()));
+                                ui.label(format!("balance: {}", balance));
                             } else {
                                 ui.label("balance: (overflow)");
                             }
                             if let Some(fee) = Decimal::from(info.fee).checked_mul(scale) {
-                                ui.label(format!("fee: {}", fee.to_string()));
+                                ui.label(format!("fee: {}", fee));
                             } else {
                                 ui.label("fee: (overflow)");
                             }
