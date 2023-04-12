@@ -156,6 +156,9 @@ impl eframe::App for App {
         // it shows the public address and sync %
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                // Add a display of the network we are connected to
+                ui.strong(format!("Network: {}", worker.get_chain_id()));
+
                 // Add a display of the public address, and a copy button
                 let public_address = worker.get_b58_address();
                 if ui

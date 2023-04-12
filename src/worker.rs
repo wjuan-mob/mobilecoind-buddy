@@ -40,6 +40,8 @@ pub struct Worker {
     monitor_b58_address: String,
     /// The minimum fees for this network
     minimum_fees: HashMap<TokenId, u64>,
+    /// The chain id of the network
+    chain_id: String,
     /// The state that is mutable after initialization (updated by worker thread)
     state: Arc<Mutex<WorkerState>>,
     /// The worker thread handle
@@ -84,6 +86,8 @@ struct MobilecoindSetupData {
     pub monitor_b58_address: String,
     // The minimum fees of the network
     pub minimum_fees: HashMap<TokenId, u64>,
+    // The chain id of the network
+    pub chain_id: String,
 }
 
 impl Worker {
@@ -106,6 +110,7 @@ impl Worker {
             monitor_public_address,
             monitor_b58_address,
             minimum_fees,
+            chain_id,
         } = loop {
             match Self::try_new_mobilecoind(&mobilecoind_api_client, &account_key) {
                 Ok(result) => break result,
@@ -157,21 +162,25 @@ impl Worker {
             monitor_public_address,
             monitor_b58_address,
             minimum_fees,
+            chain_id,
             state,
             join_handle,
             stop_requested,
         }))
     }
 
+    /// Get the b58 address of the monitored account.
     pub fn get_b58_address(&self) -> String {
         self.monitor_b58_address.clone()
     }
 
+    /// Get the sync progress of the monitored account
     pub fn get_sync_progress(&self) -> (u64, u64) {
         let st = self.state.lock().unwrap();
         (st.synced_blocks, st.total_blocks)
     }
 
+    /// Get the token info of tokens known to us, and configured on this network
     pub fn get_token_info(&self) -> Vec<TokenInfo> {
         // Hard-coded symbol and decimals per token id
         let result = vec![
@@ -206,6 +215,11 @@ impl Worker {
                 }
             })
             .collect()
+    }
+
+    /// Get the chain id of the network
+    pub fn get_chain_id(&self) -> String {
+        self.chain_id.clone()
     }
 
     /// Get the balances of the monitored account.
@@ -637,19 +651,19 @@ impl Worker {
         assert!(monitor_printable_wrapper.has_public_address());
         let monitor_public_address = monitor_printable_wrapper.get_public_address();
 
-        // Get the network minimum fees and compute faucet amounts
-        let minimum_fees = {
-            let mut result = HashMap::<TokenId, u64>::default();
+        // Get the network minimum fees and chain id
+        let (minimum_fees, chain_id) = {
+            let mut minimum_fees = HashMap::<TokenId, u64>::default();
 
-            let resp = mobilecoind_api_client
+            let mut resp = mobilecoind_api_client
                 .get_network_status(&Default::default())
                 .map_err(|err| format!("Failed getting network status: {err}"))?;
 
             for (k, v) in resp.get_last_block_info().minimum_fees.iter() {
-                result.insert(k.into(), *v);
+                minimum_fees.insert(k.into(), *v);
             }
 
-            result
+            (minimum_fees, resp.take_chain_id())
         };
 
         Ok(MobilecoindSetupData {
@@ -657,6 +671,7 @@ impl Worker {
             monitor_public_address: monitor_public_address.clone(),
             monitor_b58_address,
             minimum_fees,
+            chain_id,
         })
     }
 
