@@ -18,12 +18,18 @@ impl TokenInfo {
     /// Try parsing a user-specified, scaled value, and modify decimals to make it
     /// a u64 in the smallest representable units
     pub fn try_scaled_to_u64(&self, scaled_value_str: &str) -> Result<u64, String> {
-        let parsed_value = Decimal::from_str(scaled_value_str).map_err(|err| err.to_string())?;
+        let parsed_decimal = Decimal::from_str(scaled_value_str).map_err(|err| err.to_string())?;
+        self.try_decimal_to_u64(parsed_decimal)
+    }
+
+    /// Try converting a scaled decimal value to a u64 value in the smallest representable units
+    pub fn try_decimal_to_u64(&self, scaled_decimal: Decimal) -> Result<u64, String> {
         let scale = Decimal::new(1, self.decimals);
-        let rescaled_value = parsed_value
+        // Divide scaled_decimal by scaled to cancel out the scaling
+        let unscaled_value = scaled_decimal
             .checked_div(scale)
             .ok_or("decimal overflow".to_string())?;
-        let u64_value = rescaled_value
+        let u64_value = unscaled_value
             .round()
             .to_u64()
             .ok_or("u64 overflow".to_string())?;

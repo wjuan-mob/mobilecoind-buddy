@@ -6,6 +6,7 @@ use egui::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{event, Level};
@@ -45,10 +46,10 @@ pub struct App {
     base_token_id: TokenId,
     /// The counter token id in the offer_swap pane
     counter_token_id: TokenId,
-    /// The base token volume in the offer_swap pane
-    base_volume: String,
-    /// The counter token volume in the offer_swap pane
-    counter_volume: String,
+    /// The price in the offer_swap pane
+    offer_price: String,
+    /// The volume in the offer_swap pane
+    offer_volume: String,
     /// The worker is doing balance checking with mobilecoind in the background,
     /// and fetching a quotebook from deqs if available.
     #[serde(skip)]
@@ -68,9 +69,9 @@ impl Default for App {
             swap_to_token_id: TokenId::from(1),
             swap_to_value: Default::default(),
             base_token_id: TokenId::from(0),
-            base_volume: Default::default(),
             counter_token_id: TokenId::from(1),
-            counter_volume: Default::default(),
+            offer_price: Default::default(),
+            offer_volume: Default::default(),
             worker: None,
         }
     }
@@ -497,19 +498,30 @@ impl eframe::App for App {
                         }
                     };
 
-                    // User-specified volumes of the chosen tokens
+                    // User-specified price for base-token in terms of counter token
                     ui.horizontal(|ui| {
-                        ui.label(base_token_info.symbol.clone());
-                        ui.text_edit_singleline(&mut self.base_volume);
+                        ui.label(format!("Price ({})", counter_token_info.symbol.clone()));
+                        ui.text_edit_singleline(&mut self.offer_price);
                     });
                     ui.horizontal(|ui| {
-                        ui.label(counter_token_info.symbol.clone());
-                        ui.text_edit_singleline(&mut self.counter_volume);
+                        ui.label(format!("Volume ({})", base_token_info.symbol.clone()));
+                        ui.text_edit_singleline(&mut self.offer_volume);
                     });
 
-                    let base_u64_value = base_token_info.try_scaled_to_u64(&self.base_volume);
-                    let counter_u64_value =
-                        counter_token_info.try_scaled_to_u64(&self.counter_volume);
+                    let base_volume =
+                        Decimal::from_str(&self.offer_volume).map_err(|err| err.to_string());
+                    let price = Decimal::from_str(&self.offer_price).map_err(|err| err.to_string());
+                    let counter_volume = base_volume.clone().and_then(|base_volume_decimal| {
+                        price.and_then(|price_decimal| {
+                            base_volume_decimal
+                                .checked_mul(price_decimal)
+                                .ok_or_else(|| "decimal overflow".to_owned())
+                        })
+                    });
+                    let base_u64_value = base_volume
+                        .and_then(|base_vol| base_token_info.try_decimal_to_u64(base_vol));
+                    let counter_u64_value = counter_volume
+                        .and_then(|counter_vol| counter_token_info.try_decimal_to_u64(counter_vol));
 
                     // True if we have enough to conduct a buy
                     let sufficient_counter_balance = counter_u64_value
