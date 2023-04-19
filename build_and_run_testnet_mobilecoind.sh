@@ -18,9 +18,9 @@ export MC_FOG_INGEST_ENCLAVE_CSS=$(pwd)/ingest-enclave.css
 mkdir -p /tmp/testnet
 
 cargo run --release -p mc-mobilecoind -- \
-  --ledger-db /tmp/testnet/ledger-db \
-  --watcher-db /tmp/testnet/watcher-db \
-  --mobilecoind-db /tmp/testnet/mobilecoind-db \
+  --ledger-db ~/testnet/ledger-db \
+  --watcher-db ~/testnet/watcher-db \
+  --mobilecoind-db ~/testnet/mobilecoind-db \
   --poll-interval 1 \
   --chain-id test \
   --peer mc://node1.test.mobilecoin.com/ \
