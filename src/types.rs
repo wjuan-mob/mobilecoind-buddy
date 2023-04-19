@@ -162,9 +162,10 @@ impl ValidatedQuote {
                     return Err("Bid SCI is too complicated for this implementation (expected one partial fill output)".to_owned());
                 }
                 if self.amounts.partial_fill_outputs[0].token_id != base_token_id {
-                    return Err(
-                        "Bid SCI does not belong to this book (partial fill output)".to_owned()
-                    );
+                    return Err(format!(
+                        "Bid SCI does not belong to this book (partial fill output) {} != {}",
+                        self.amounts.partial_fill_outputs[0].token_id, base_token_id
+                    ));
                 }
                 // TODO: should handle overflow at i64 conversion
                 let counter_volume = Decimal::new(
