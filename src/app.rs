@@ -630,8 +630,8 @@ impl eframe::App for App {
                     // Show the quote book
 
                     let books = [
-                        worker.get_quote_book(self.swap_to_token_id, self.swap_from_token_id),
-                        worker.get_quote_book(self.swap_from_token_id, self.swap_to_token_id),
+                        worker.get_quote_book(self.base_token_id, self.counter_token_id),
+                        worker.get_quote_book(self.counter_token_id, self.base_token_id),
                     ];
                     let headings = ["Bid", "Ask"];
 
